@@ -1,12 +1,15 @@
-"""Product, FAQ, and Embedding models for knowledge base."""
+"""FAQ and Embedding models for knowledge base.
+
+Products come from CHICX backend API - no local storage needed.
+Only FAQs are stored locally with pgvector embeddings for semantic search.
+"""
 
 import enum
 import uuid
 from datetime import datetime, timezone
-from decimal import Decimal
 
-from sqlalchemy import String, Text, DateTime, Enum, ForeignKey, Boolean, Numeric
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import String, Text, DateTime, Enum, Boolean
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -22,31 +25,6 @@ class SourceType(str, enum.Enum):
     """Embedding source type."""
 
     FAQ = "faq"
-    PRODUCT = "product"
-
-
-class Product(Base):
-    """Product catalog synced from CHICX."""
-
-    __tablename__ = "products"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    chicx_product_id: Mapped[str] = mapped_column(
-        String(50), unique=True, nullable=False, index=True
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    category: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
-    price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    product_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    variants: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    synced_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
-    )
 
 
 class FAQ(Base):
@@ -67,7 +45,10 @@ class FAQ(Base):
 
 
 class Embedding(Base):
-    """Vector embeddings for semantic search using pgvector."""
+    """Vector embeddings for semantic search using pgvector.
+
+    Used only for FAQ semantic search.
+    """
 
     __tablename__ = "embeddings"
 
@@ -78,7 +59,6 @@ class Embedding(Base):
     source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
     # Vector column for pgvector - 1536 dimensions (OpenAI embedding size)
-    # Note: This requires the pgvector extension to be enabled in PostgreSQL
     embedding = mapped_column(Vector(1536) if Vector else Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)

@@ -1,493 +1,535 @@
-"""Analytics and Dashboard API endpoints.
+"""Dashboard API endpoints for CHICX Admin Dashboard.
 
-Provides metrics and analytics data for the CHICX dashboard including:
-- Conversation metrics
-- Order statistics
-- User engagement
-- Bot performance
+Simplified dashboard with 4 screens:
+1. Overview - Today's snapshot (4 cards + messages by hour chart)
+2. Conversations - CRM view with chat history
+3. Voice - Call log with audio playback
+4. Catalog Gaps - No-results searches
+
+No WebSocket, no Redis pub/sub. Data refreshes on page reload.
 """
 
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, and_
+from fastapi import APIRouter, Depends, Query, HTTPException
+from sqlalchemy import select, func, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.user import User
-from app.models.conversation import Conversation, Message, ChannelType
-from app.models.order import Order, OrderStatus
-from app.models.system import AnalyticsEvent
+from app.models.conversation import Conversation, Message, ConversationStatus, MessageRole
+from app.models.voice import Call, CallStatus
+from app.models.system import AnalyticsEvent, SearchLog
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/admin/analytics", tags=["Analytics"])
+router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
 
 # =============================================================================
-# Dashboard Overview
+# Screen 1: Overview
 # =============================================================================
 
 
-@router.get("/dashboard")
-async def get_dashboard_overview(
+@router.get("/overview")
+async def get_overview(
     db: AsyncSession = Depends(get_db),
-    days: int = Query(default=7, ge=1, le=90, description="Number of days to look back"),
 ) -> dict[str, Any]:
-    """Get dashboard overview with key metrics.
+    """Get dashboard overview - today's snapshot.
 
-    Returns summary statistics for the dashboard including:
-    - Total users and new users
-    - Conversation counts
-    - Message counts
-    - Order statistics
+    Returns:
+    - conversations_today: Total conversations started today
+    - orders_tracked: Count of order tracking queries today
+    - calls_received: Total inbound calls today
+    - calls_missed: Missed calls today
+    - messages_by_hour: Message volume by hour (for bar chart)
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    # User metrics
-    total_users = await db.scalar(select(func.count(User.id)))
-    new_users = await db.scalar(
-        select(func.count(User.id)).where(User.created_at >= cutoff)
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
     )
 
-    # Conversation metrics
-    total_conversations = await db.scalar(
-        select(func.count(Conversation.id)).where(Conversation.started_at >= cutoff)
-    )
-    whatsapp_conversations = await db.scalar(
+    # Conversations today
+    conversations_today = await db.scalar(
         select(func.count(Conversation.id)).where(
-            and_(
-                Conversation.started_at >= cutoff,
-                Conversation.channel == ChannelType.WHATSAPP,
-            )
+            Conversation.started_at >= today_start
         )
     )
-    voice_conversations = await db.scalar(
-        select(func.count(Conversation.id)).where(
+
+    # Orders tracked (count of get_order_status tool calls)
+    orders_tracked = await db.scalar(
+        select(func.count(AnalyticsEvent.id)).where(
             and_(
-                Conversation.started_at >= cutoff,
-                Conversation.channel == ChannelType.VOICE,
+                AnalyticsEvent.event_type == "tool_call",
+                AnalyticsEvent.created_at >= today_start,
+                AnalyticsEvent.event_data["tool_name"].astext == "get_order_status",
             )
         )
     )
 
-    # Message metrics
-    total_messages = await db.scalar(
-        select(func.count(Message.id)).where(Message.created_at >= cutoff)
+    # Calls received today
+    calls_received = await db.scalar(
+        select(func.count(Call.id)).where(Call.started_at >= today_start)
     )
 
-    # Order metrics
-    total_orders = await db.scalar(
-        select(func.count(Order.id)).where(Order.placed_at >= cutoff)
-    )
-    delivered_orders = await db.scalar(
-        select(func.count(Order.id)).where(
+    # Missed calls today
+    calls_missed = await db.scalar(
+        select(func.count(Call.id)).where(
             and_(
-                Order.placed_at >= cutoff,
-                Order.status == OrderStatus.DELIVERED,
+                Call.started_at >= today_start,
+                Call.status == CallStatus.MISSED,
             )
         )
     )
+
+    # Messages by hour (for bar chart)
+    messages_by_hour = []
+    for hour in range(24):
+        hour_start = today_start + timedelta(hours=hour)
+        hour_end = hour_start + timedelta(hours=1)
+
+        count = await db.scalar(
+            select(func.count(Message.id)).where(
+                and_(
+                    Message.created_at >= hour_start,
+                    Message.created_at < hour_end,
+                )
+            )
+        )
+        messages_by_hour.append({
+            "hour": hour,
+            "count": count or 0,
+        })
 
     return {
-        "period_days": days,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "users": {
-            "total": total_users or 0,
-            "new": new_users or 0,
-        },
-        "conversations": {
-            "total": total_conversations or 0,
-            "whatsapp": whatsapp_conversations or 0,
-            "voice": voice_conversations or 0,
-        },
-        "messages": {
-            "total": total_messages or 0,
-        },
-        "orders": {
-            "total": total_orders or 0,
-            "delivered": delivered_orders or 0,
-        },
+        "conversations_today": conversations_today or 0,
+        "orders_tracked": orders_tracked or 0,
+        "calls_received": calls_received or 0,
+        "calls_missed": calls_missed or 0,
+        "messages_by_hour": messages_by_hour,
     }
 
 
 # =============================================================================
-# Conversation Analytics
+# Screen 2: Conversations (CRM View)
 # =============================================================================
 
 
 @router.get("/conversations")
-async def get_conversation_analytics(
+async def list_conversations(
     db: AsyncSession = Depends(get_db),
-    days: int = Query(default=7, ge=1, le=90),
+    status: str | None = Query(default=None, description="Filter by status"),
+    search: str | None = Query(default=None, description="Search by phone number"),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
-    """Get detailed conversation analytics.
+    """List conversations with pagination and filters.
 
-    Returns:
-    - Daily conversation counts
-    - Channel breakdown
-    - Average messages per conversation
+    Returns paginated list for the Conversations table.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    offset = (page - 1) * limit
 
-    # Daily breakdown
-    daily_stats = []
-    for i in range(days):
-        day_start = datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ) - timedelta(days=i)
-        day_end = day_start + timedelta(days=1)
+    # Build base query
+    query = select(Conversation).join(User)
 
-        count = await db.scalar(
-            select(func.count(Conversation.id)).where(
-                and_(
-                    Conversation.started_at >= day_start,
-                    Conversation.started_at < day_end,
-                )
-            )
+    # Apply filters
+    if status:
+        try:
+            status_enum = ConversationStatus(status)
+            query = query.where(Conversation.status == status_enum)
+        except ValueError:
+            pass
+
+    if search:
+        query = query.where(User.phone.ilike(f"%{search}%"))
+
+    # Get total count
+    count_query = select(func.count()).select_from(query.subquery())
+    total = await db.scalar(count_query) or 0
+
+    # Get paginated results
+    query = query.order_by(desc(Conversation.started_at)).offset(offset).limit(limit)
+    result = await db.execute(query)
+    conversations = result.scalars().all()
+
+    # Build response
+    items = []
+    for conv in conversations:
+        # Get message count
+        msg_count = await db.scalar(
+            select(func.count(Message.id)).where(Message.conversation_id == conv.id)
         )
-        daily_stats.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "count": count or 0,
+
+        # Get last message timestamp
+        last_msg = await db.scalar(
+            select(func.max(Message.created_at)).where(Message.conversation_id == conv.id)
+        )
+
+        # Get user phone
+        user = await db.get(User, conv.user_id)
+
+        items.append({
+            "id": str(conv.id),
+            "phone": user.phone if user else "Unknown",
+            "status": conv.status.value,
+            "channel": conv.channel.value,
+            "message_count": msg_count or 0,
+            "started_at": conv.started_at.isoformat(),
+            "last_message_at": last_msg.isoformat() if last_msg else None,
         })
 
-    # Channel breakdown
-    whatsapp_count = await db.scalar(
-        select(func.count(Conversation.id)).where(
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": (total + limit - 1) // limit,
+    }
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation_history(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get chat history for a conversation (popup view).
+
+    Returns all messages in WhatsApp-style format.
+    """
+    try:
+        conv_uuid = UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation ID")
+
+    # Get conversation
+    conversation = await db.get(Conversation, conv_uuid)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Get user
+    user = await db.get(User, conversation.user_id)
+
+    # Get all messages
+    result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == conv_uuid)
+        .order_by(Message.created_at)
+    )
+    messages = result.scalars().all()
+
+    return {
+        "id": str(conversation.id),
+        "phone": user.phone if user else "Unknown",
+        "status": conversation.status.value,
+        "channel": conversation.channel.value,
+        "started_at": conversation.started_at.isoformat(),
+        "messages": [
+            {
+                "id": str(msg.id),
+                "role": msg.role.value,
+                "content": msg.content,
+                "timestamp": msg.created_at.isoformat(),
+            }
+            for msg in messages
+        ],
+    }
+
+
+# =============================================================================
+# Screen 3: Voice Manager
+# =============================================================================
+
+
+@router.get("/calls")
+async def list_calls(
+    db: AsyncSession = Depends(get_db),
+    status: str | None = Query(default=None, description="Filter by status"),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    """List voice calls with pagination.
+
+    Returns paginated list for the Voice call log table.
+    """
+    offset = (page - 1) * limit
+
+    # Build query
+    query = select(Call)
+
+    if status:
+        try:
+            status_enum = CallStatus(status)
+            query = query.where(Call.status == status_enum)
+        except ValueError:
+            pass
+
+    # Get total count
+    count_query = select(func.count()).select_from(query.subquery())
+    total = await db.scalar(count_query) or 0
+
+    # Get paginated results
+    query = query.order_by(desc(Call.started_at)).offset(offset).limit(limit)
+    result = await db.execute(query)
+    calls = result.scalars().all()
+
+    items = []
+    for call in calls:
+        # Format duration as mm:ss
+        duration_str = None
+        if call.duration_seconds:
+            minutes = call.duration_seconds // 60
+            seconds = call.duration_seconds % 60
+            duration_str = f"{minutes}:{seconds:02d}"
+
+        items.append({
+            "id": str(call.id),
+            "phone": call.phone,
+            "status": call.status.value,
+            "duration": duration_str,
+            "language": call.language,
+            "started_at": call.started_at.isoformat(),
+            "has_recording": bool(call.recording_url),
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": (total + limit - 1) // limit,
+    }
+
+
+@router.get("/calls/{call_id}/audio")
+async def get_call_audio(
+    call_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get audio URL for a call (S3 pre-signed URL).
+
+    Returns URL for HTML5 audio player.
+    """
+    try:
+        call_uuid = UUID(call_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid call ID")
+
+    call = await db.get(Call, call_uuid)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+
+    if not call.recording_url:
+        raise HTTPException(status_code=404, detail="No recording available")
+
+    # TODO: Generate S3 pre-signed URL if needed
+    # For now, return the stored URL directly
+    return {
+        "call_id": str(call.id),
+        "audio_url": call.recording_url,
+        "duration": call.duration_seconds,
+    }
+
+
+# =============================================================================
+# Screen 4: Catalog Gaps
+# =============================================================================
+
+
+@router.get("/catalog-gaps")
+async def get_catalog_gaps(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Get 'no results' searches for catalog gap analysis.
+
+    Returns aggregated searches that returned 0 results,
+    sorted by frequency to identify missing products.
+    """
+    # Get searches with 0 results, grouped by query
+    result = await db.execute(
+        select(
+            SearchLog.query,
+            SearchLog.language,
+            func.count(SearchLog.id).label("count"),
+            func.max(SearchLog.created_at).label("last_searched"),
+        )
+        .where(SearchLog.results_count == 0)
+        .group_by(SearchLog.query, SearchLog.language)
+        .order_by(desc("count"))
+        .limit(limit)
+    )
+    rows = result.all()
+
+    gaps = [
+        {
+            "query": row.query,
+            "language": row.language,
+            "count": row.count,
+            "last_searched": row.last_searched.isoformat() if row.last_searched else None,
+        }
+        for row in rows
+    ]
+
+    return {
+        "gaps": gaps,
+        "total": len(gaps),
+    }
+
+
+# =============================================================================
+# Voice Usage / Billing
+# =============================================================================
+
+
+@router.get("/voice-usage")
+async def get_voice_usage(
+    db: AsyncSession = Depends(get_db),
+    year: int | None = Query(default=None, description="Year (defaults to current)"),
+    month: int | None = Query(default=None, ge=1, le=12, description="Month (defaults to current)"),
+) -> dict[str, Any]:
+    """Get voice usage metrics for billing.
+
+    Returns:
+    - total_calls: Number of calls in the period
+    - total_seconds: Total duration in seconds
+    - total_minutes: Total duration in minutes (rounded up)
+    - calls_by_status: Breakdown by call status
+    - daily_breakdown: Daily usage for the month
+    """
+    now = datetime.now(timezone.utc)
+    target_year = year or now.year
+    target_month = month or now.month
+
+    # Get first and last day of the month
+    month_start = datetime(target_year, target_month, 1, tzinfo=timezone.utc)
+    if target_month == 12:
+        month_end = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        month_end = datetime(target_year, target_month + 1, 1, tzinfo=timezone.utc)
+
+    # Total calls in period
+    total_calls = await db.scalar(
+        select(func.count(Call.id)).where(
             and_(
-                Conversation.started_at >= cutoff,
-                Conversation.channel == ChannelType.WHATSAPP,
+                Call.started_at >= month_start,
+                Call.started_at < month_end,
             )
         )
-    )
-    voice_count = await db.scalar(
-        select(func.count(Conversation.id)).where(
+    ) or 0
+
+    # Total seconds (only completed calls with duration)
+    total_seconds = await db.scalar(
+        select(func.coalesce(func.sum(Call.duration_seconds), 0)).where(
             and_(
-                Conversation.started_at >= cutoff,
-                Conversation.channel == ChannelType.VOICE,
+                Call.started_at >= month_start,
+                Call.started_at < month_end,
+                Call.duration_seconds.isnot(None),
             )
         )
-    )
+    ) or 0
 
-    # Average messages per conversation
-    total_convos = await db.scalar(
-        select(func.count(Conversation.id)).where(Conversation.started_at >= cutoff)
-    )
-    total_msgs = await db.scalar(
-        select(func.count(Message.id)).where(Message.created_at >= cutoff)
-    )
-    avg_messages = (total_msgs / total_convos) if total_convos else 0
+    # Round up to minutes for billing
+    total_minutes = (total_seconds + 59) // 60 if total_seconds > 0 else 0
 
-    return {
-        "period_days": days,
-        "daily": list(reversed(daily_stats)),
-        "by_channel": {
-            "whatsapp": whatsapp_count or 0,
-            "voice": voice_count or 0,
-        },
-        "avg_messages_per_conversation": round(avg_messages, 2),
-    }
-
-
-# =============================================================================
-# Order Analytics
-# =============================================================================
-
-
-@router.get("/orders")
-async def get_order_analytics(
-    db: AsyncSession = Depends(get_db),
-    days: int = Query(default=7, ge=1, le=90),
-) -> dict[str, Any]:
-    """Get order analytics.
-
-    Returns:
-    - Daily order counts
-    - Status breakdown
-    - Revenue metrics
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    # Daily breakdown
-    daily_stats = []
-    for i in range(days):
-        day_start = datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ) - timedelta(days=i)
-        day_end = day_start + timedelta(days=1)
-
-        count = await db.scalar(
-            select(func.count(Order.id)).where(
-                and_(
-                    Order.placed_at >= day_start,
-                    Order.placed_at < day_end,
-                )
-            )
+    # Calls by status
+    status_result = await db.execute(
+        select(
+            Call.status,
+            func.count(Call.id).label("count"),
+            func.coalesce(func.sum(Call.duration_seconds), 0).label("duration"),
         )
-        revenue = await db.scalar(
-            select(func.sum(Order.total_amount)).where(
-                and_(
-                    Order.placed_at >= day_start,
-                    Order.placed_at < day_end,
-                )
-            )
-        )
-        daily_stats.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "count": count or 0,
-            "revenue": float(revenue) if revenue else 0,
-        })
-
-    # Status breakdown
-    status_counts = {}
-    for status in OrderStatus:
-        count = await db.scalar(
-            select(func.count(Order.id)).where(
-                and_(
-                    Order.placed_at >= cutoff,
-                    Order.status == status,
-                )
-            )
-        )
-        status_counts[status.value] = count or 0
-
-    # Total revenue
-    total_revenue = await db.scalar(
-        select(func.sum(Order.total_amount)).where(Order.placed_at >= cutoff)
-    )
-    total_orders = await db.scalar(
-        select(func.count(Order.id)).where(Order.placed_at >= cutoff)
-    )
-    avg_order_value = (total_revenue / total_orders) if total_orders else 0
-
-    return {
-        "period_days": days,
-        "daily": list(reversed(daily_stats)),
-        "by_status": status_counts,
-        "total_revenue": float(total_revenue) if total_revenue else 0,
-        "total_orders": total_orders or 0,
-        "avg_order_value": round(float(avg_order_value), 2) if avg_order_value else 0,
-    }
-
-
-# =============================================================================
-# User Analytics
-# =============================================================================
-
-
-@router.get("/users")
-async def get_user_analytics(
-    db: AsyncSession = Depends(get_db),
-    days: int = Query(default=7, ge=1, le=90),
-) -> dict[str, Any]:
-    """Get user analytics.
-
-    Returns:
-    - Daily new user signups
-    - Active users (users with conversations)
-    - User retention metrics
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    # Daily new users
-    daily_stats = []
-    for i in range(days):
-        day_start = datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ) - timedelta(days=i)
-        day_end = day_start + timedelta(days=1)
-
-        count = await db.scalar(
-            select(func.count(User.id)).where(
-                and_(
-                    User.created_at >= day_start,
-                    User.created_at < day_end,
-                )
-            )
-        )
-        daily_stats.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "new_users": count or 0,
-        })
-
-    # Total and new users
-    total_users = await db.scalar(select(func.count(User.id)))
-    new_users = await db.scalar(
-        select(func.count(User.id)).where(User.created_at >= cutoff)
-    )
-
-    # Active users (with conversations in period)
-    active_users = await db.scalar(
-        select(func.count(func.distinct(Conversation.user_id))).where(
-            Conversation.started_at >= cutoff
-        )
-    )
-
-    # Users with orders
-    users_with_orders = await db.scalar(
-        select(func.count(func.distinct(Order.user_id))).where(
-            Order.placed_at >= cutoff
-        )
-    )
-
-    return {
-        "period_days": days,
-        "daily": list(reversed(daily_stats)),
-        "total_users": total_users or 0,
-        "new_users": new_users or 0,
-        "active_users": active_users or 0,
-        "users_with_orders": users_with_orders or 0,
-    }
-
-
-# =============================================================================
-# Bot Performance Analytics
-# =============================================================================
-
-
-@router.get("/bot-performance")
-async def get_bot_performance(
-    db: AsyncSession = Depends(get_db),
-    days: int = Query(default=7, ge=1, le=90),
-) -> dict[str, Any]:
-    """Get bot performance metrics.
-
-    Returns:
-    - Response times (if tracked)
-    - Tool usage statistics
-    - Error rates
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    # Get analytics events for tool usage
-    tool_events = await db.execute(
-        select(AnalyticsEvent.event_data)
         .where(
             and_(
-                AnalyticsEvent.event_type == "tool_call",
-                AnalyticsEvent.created_at >= cutoff,
+                Call.started_at >= month_start,
+                Call.started_at < month_end,
             )
         )
-        .limit(1000)
+        .group_by(Call.status)
     )
-    tool_data = tool_events.scalars().all()
+    status_rows = status_result.all()
 
-    # Count tool usage
-    tool_usage = {}
-    for data in tool_data:
-        if data and "tool_name" in data:
-            tool_name = data["tool_name"]
-            tool_usage[tool_name] = tool_usage.get(tool_name, 0) + 1
+    calls_by_status = {
+        row.status.value: {
+            "count": row.count,
+            "duration_seconds": row.duration or 0,
+            "duration_minutes": ((row.duration or 0) + 59) // 60,
+        }
+        for row in status_rows
+    }
 
-    # Get error events
-    error_count = await db.scalar(
-        select(func.count(AnalyticsEvent.id)).where(
-            and_(
-                AnalyticsEvent.event_type == "error",
-                AnalyticsEvent.created_at >= cutoff,
+    # Daily breakdown
+    daily_breakdown = []
+    current_day = month_start
+    while current_day < month_end:
+        next_day = current_day + timedelta(days=1)
+
+        day_calls = await db.scalar(
+            select(func.count(Call.id)).where(
+                and_(
+                    Call.started_at >= current_day,
+                    Call.started_at < next_day,
+                )
             )
-        )
-    )
+        ) or 0
 
-    # Total events for rate calculation
-    total_events = await db.scalar(
-        select(func.count(AnalyticsEvent.id)).where(
-            AnalyticsEvent.created_at >= cutoff
-        )
-    )
+        day_seconds = await db.scalar(
+            select(func.coalesce(func.sum(Call.duration_seconds), 0)).where(
+                and_(
+                    Call.started_at >= current_day,
+                    Call.started_at < next_day,
+                    Call.duration_seconds.isnot(None),
+                )
+            )
+        ) or 0
 
-    error_rate = (error_count / total_events * 100) if total_events else 0
+        daily_breakdown.append({
+            "date": current_day.strftime("%Y-%m-%d"),
+            "calls": day_calls,
+            "duration_seconds": day_seconds,
+            "duration_minutes": (day_seconds + 59) // 60 if day_seconds > 0 else 0,
+        })
+
+        current_day = next_day
 
     return {
-        "period_days": days,
-        "tool_usage": tool_usage,
-        "error_count": error_count or 0,
-        "total_events": total_events or 0,
-        "error_rate_percent": round(error_rate, 2),
+        "period": {
+            "year": target_year,
+            "month": target_month,
+            "month_name": month_start.strftime("%B"),
+        },
+        "total_calls": total_calls,
+        "total_seconds": total_seconds,
+        "total_minutes": total_minutes,
+        "calls_by_status": calls_by_status,
+        "daily_breakdown": daily_breakdown,
     }
 
 
 # =============================================================================
-# Event Tracking
+# Utility: Log Search (called by tool executor)
 # =============================================================================
 
 
-@router.post("/events")
-async def track_event(
-    event_type: str,
-    event_data: dict[str, Any] | None = None,
+@router.post("/log-search")
+async def log_search(
+    query: str,
+    results_count: int,
+    language: str | None = None,
     user_id: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Track an analytics event.
+    """Log a product search for catalog gap analysis.
 
-    Used to record custom events for analytics tracking.
+    Called by the tool executor after each product search.
     """
-    from uuid import UUID
-
-    event = AnalyticsEvent(
+    search_log = SearchLog(
+        query=query,
+        language=language,
+        results_count=results_count,
         user_id=UUID(user_id) if user_id else None,
-        event_type=event_type,
-        event_data=event_data or {},
     )
-    db.add(event)
+    db.add(search_log)
     await db.commit()
 
-    logger.info(f"Tracked event: {event_type}")
-    return {"status": "ok", "event_id": str(event.id)}
-
-
-# =============================================================================
-# Recent Activity
-# =============================================================================
-
-
-@router.get("/recent-activity")
-async def get_recent_activity(
-    db: AsyncSession = Depends(get_db),
-    limit: int = Query(default=20, ge=1, le=100),
-) -> dict[str, Any]:
-    """Get recent activity feed for dashboard.
-
-    Returns recent conversations, orders, and events.
-    """
-    # Recent conversations
-    recent_convos = await db.execute(
-        select(Conversation)
-        .order_by(Conversation.started_at.desc())
-        .limit(limit)
-    )
-    conversations = [
-        {
-            "id": str(c.id),
-            "user_id": str(c.user_id),
-            "channel": c.channel.value,
-            "status": c.status.value,
-            "started_at": c.started_at.isoformat(),
-        }
-        for c in recent_convos.scalars().all()
-    ]
-
-    # Recent orders
-    recent_orders = await db.execute(
-        select(Order)
-        .order_by(Order.placed_at.desc())
-        .limit(limit)
-    )
-    orders = [
-        {
-            "id": str(o.id),
-            "chicx_order_id": o.chicx_order_id,
-            "user_id": str(o.user_id),
-            "status": o.status.value,
-            "total_amount": float(o.total_amount),
-            "placed_at": o.placed_at.isoformat(),
-        }
-        for o in recent_orders.scalars().all()
-    ]
-
-    return {
-        "conversations": conversations,
-        "orders": orders,
-    }
+    return {"status": "ok", "id": str(search_log.id)}

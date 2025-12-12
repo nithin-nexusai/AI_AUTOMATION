@@ -1,5 +1,5 @@
 """Webhook API endpoints."""
 
-from app.api.webhooks import whatsapp, chicx
+from app.api.webhooks import whatsapp, exotel, bolna
 
-__all__ = ["whatsapp", "chicx"]
+__all__ = ["whatsapp", "exotel", "bolna"]

@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.api.admin import health, analytics
-from app.api.webhooks import whatsapp, chicx
+from app.api.webhooks import whatsapp, exotel, bolna
 
 settings = get_settings()
 
@@ -48,6 +48,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
-app.include_router(analytics.router, tags=["Analytics"])
+app.include_router(analytics.router, tags=["Dashboard"])
 app.include_router(whatsapp.router, tags=["WhatsApp"])
-app.include_router(chicx.router, tags=["CHICX Backend"])
+app.include_router(exotel.router, tags=["Voice"])
+app.include_router(bolna.router, tags=["Bolna"])

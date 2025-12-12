@@ -1,0 +1,133 @@
+# Bolna Voice Agent Configuration for CHICX
+# Reference: https://github.com/bolna-ai/bolna
+
+agent_config:
+  agent_name: "chicx-voice-agent"
+  agent_type: "other"
+
+  # Task configuration
+  tasks:
+    - task_type: "conversation"
+      toolchain:
+        execution: "parallel"
+        pipelines:
+          - "transcriber"
+          - "llm"
+          - "synthesizer"
+
+  # Speech-to-Text (STT) Configuration
+  transcriber:
+    provider: "deepgram"  # Options: deepgram, whisper
+    model: "nova-2"
+    language: "en"  # Primary language
+    stream: true
+    endpointing: 400  # Silence detection in ms
+    keywords:
+      - "CHICX:5"
+      - "saree:3"
+      - "kurti:3"
+      - "order:3"
+      - "tracking:3"
+
+  # LLM Configuration
+  llm:
+    provider: "custom"  # Use custom endpoint
+    base_url: "${DEEPSEEK_BASE_URL}"
+    model: "${DEEPSEEK_MODEL}"
+    api_key: "${DEEPSEEK_API_KEY}"
+    max_tokens: 150  # Keep responses short for voice
+    temperature: 0.7
+
+    # Tools for function calling
+    tools:
+      - name: "search_products"
+        description: "Search for products in the CHICX catalog"
+        parameters:
+          type: "object"
+          properties:
+            query:
+              type: "string"
+              description: "Search query for products"
+            category:
+              type: "string"
+              description: "Product category filter"
+          required: ["query"]
+
+      - name: "get_order_status"
+        description: "Get status of a customer order"
+        parameters:
+          type: "object"
+          properties:
+            order_id:
+              type: "string"
+              description: "The order ID to look up"
+          required: ["order_id"]
+
+      - name: "search_faq"
+        description: "Search FAQs for customer questions"
+        parameters:
+          type: "object"
+          properties:
+            query:
+              type: "string"
+              description: "Customer's question"
+          required: ["query"]
+
+  # Text-to-Speech (TTS) Configuration
+  synthesizer:
+    provider: "elevenlabs"  # Options: elevenlabs, google, azure
+    voice_id: "21m00Tcm4TlvDq8ikWAM"  # Rachel - warm female voice
+    model: "eleven_multilingual_v2"  # Supports Indian languages
+    stability: 0.5
+    similarity_boost: 0.75
+    style: 0.5
+    language_code: "en"
+
+  # Telephony Configuration (Exotel)
+  telephony:
+    provider: "exotel"
+    exotel_sid: "${EXOTEL_SID}"
+    exotel_api_key: "${EXOTEL_API_KEY}"
+    exotel_api_token: "${EXOTEL_API_TOKEN}"
+
+# Webhook configuration
+webhooks:
+  # Called when transcription is complete
+  transcription_complete:
+    url: "${APP_BASE_URL}/webhooks/bolna/transcript"
+    method: "POST"
+
+  # Called when call ends
+  call_complete:
+    url: "${APP_BASE_URL}/webhooks/bolna/call-complete"
+    method: "POST"
+
+  # Called for tool execution
+  tool_call:
+    url: "${APP_BASE_URL}/webhooks/bolna/tool"
+    method: "POST"
+
+# Language settings
+language:
+  default: "en"
+  supported:
+    - "en"    # English
+    - "hi"    # Hindi
+    - "ta"    # Tamil
+  auto_detect: true
+
+# Conversation settings
+conversation:
+  greeting: "Hello! Welcome to CHICX. How can I help you today?"
+  goodbye: "Thank you for calling CHICX. Have a great day!"
+  silence_timeout: 5000  # ms before prompting
+  max_duration: 300  # Max call duration in seconds (5 min)
+
+  # Escalation triggers
+  escalation:
+    keywords:
+      - "speak to human"
+      - "customer service"
+      - "manager"
+      - "real person"
+    max_failed_responses: 3

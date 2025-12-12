@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 import redis.asyncio as redis
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -36,6 +36,9 @@ from app.models.conversation import (
     MessageRole,
     MessageType as DBMessageType,
 )
+from app.models.knowledge import FAQ
+from app.services.embedding import EmbeddingService
+from app.services.chicx_api import get_chicx_client, ChicxAPIError
 from app.schemas.whatsapp import (
     Message,
     MessageType,
@@ -70,8 +73,9 @@ class MessageSendError(WhatsAppServiceError):
 class ChicxToolExecutor:
     """Tool executor for CHICX bot LLM function calling.
 
-    This class handles the execution of tools called by the LLM,
-    including product search, order tracking, and FAQ queries.
+    This class handles the execution of tools called by the LLM:
+    - Products & Orders: Fetched from CHICX backend API (real-time)
+    - FAQs: Stored locally with pgvector for semantic search
     """
 
     def __init__(
@@ -79,21 +83,19 @@ class ChicxToolExecutor:
         db: AsyncSession,
         redis_client: redis.Redis,
         user_phone: str,
-        user_id: uuid.UUID | None = None,
     ) -> None:
         """Initialize the tool executor.
 
         Args:
-            db: Async database session
+            db: Async database session (for FAQ queries only)
             redis_client: Redis client for caching
             user_phone: Phone number of the user
-            user_id: Optional user ID for order queries
         """
         self._db = db
         self._redis = redis_client
         self._user_phone = user_phone
-        self._user_id = user_id
         self._settings = get_settings()
+        self._chicx_client = get_chicx_client()
 
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Execute a tool with the given arguments.
@@ -129,85 +131,182 @@ class ChicxToolExecutor:
             logger.exception(f"Error executing tool {tool_name}: {e}")
             return {"error": f"Failed to execute {tool_name}: {str(e)}"}
 
-    async def _search_products(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Search products in the catalog.
+    # =========================================================================
+    # Product Tools - Call CHICX Backend API
+    # =========================================================================
 
-        This is a placeholder - implement with actual product search logic.
-        """
-        # TODO: Implement actual product search using database/external API
+    async def _search_products(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Search products via CHICX backend API."""
         query = args.get("query", "")
         category = args.get("category")
         min_price = args.get("min_price")
         max_price = args.get("max_price")
-        limit = args.get("limit", 5)
+        limit = min(args.get("limit", 5), 10)
 
         logger.info(
-            f"Searching products: query={query}, category={category}, "
+            f"Searching products via CHICX API: query={query}, category={category}, "
             f"price_range={min_price}-{max_price}, limit={limit}"
         )
 
-        # Placeholder response - replace with actual implementation
-        return {
-            "products": [],
-            "total_count": 0,
-            "has_more": False,
-            "message": "Product search is being set up. Please visit chicx.in to browse products.",
-        }
+        try:
+            result = await self._chicx_client.search_products(
+                query=query,
+                category=category,
+                min_price=min_price,
+                max_price=max_price,
+                limit=limit,
+            )
+            return result
+        except ChicxAPIError as e:
+            logger.error(f"CHICX API error searching products: {e}")
+            return {
+                "products": [],
+                "total_count": 0,
+                "message": "Unable to search products right now. Please try again or visit chicx.in to browse.",
+            }
 
     async def _get_product_details(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Get details of a specific product."""
+        """Get product details via CHICX backend API."""
         product_id = args["product_id"]
 
-        logger.info(f"Getting product details: product_id={product_id}")
+        logger.info(f"Getting product details via CHICX API: product_id={product_id}")
 
-        # TODO: Implement actual product lookup
-        return {
-            "error": "product_not_found",
-            "message": f"Product {product_id} not found. Please check the product ID.",
-        }
+        try:
+            product = await self._chicx_client.get_product(product_id)
+            if not product:
+                return {
+                    "error": "product_not_found",
+                    "message": f"Product '{product_id}' not found. Please check the product ID or search for products.",
+                }
+            return product
+        except ChicxAPIError as e:
+            logger.error(f"CHICX API error getting product: {e}")
+            return {
+                "error": "api_error",
+                "message": "Unable to get product details right now. Please try again or visit chicx.in.",
+            }
+
+    # =========================================================================
+    # Order Tools - Call CHICX Backend API
+    # =========================================================================
 
     async def _get_order_status(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Get order status and tracking information."""
+        """Get order status via CHICX backend API."""
         order_id = args["order_id"]
 
-        logger.info(f"Getting order status: order_id={order_id}")
+        logger.info(f"Getting order status via CHICX API: order_id={order_id}")
 
-        # TODO: Implement actual order lookup from database/CHICX API
-        return {
-            "error": "order_not_found",
-            "message": f"Order {order_id} not found. Please check the order ID from your confirmation email.",
-        }
+        try:
+            order = await self._chicx_client.get_order(order_id)
+            if not order:
+                return {
+                    "error": "order_not_found",
+                    "message": f"Order '{order_id}' not found. Please check the order ID from your confirmation email or SMS.",
+                }
+            return order
+        except ChicxAPIError as e:
+            logger.error(f"CHICX API error getting order: {e}")
+            return {
+                "error": "api_error",
+                "message": "Unable to get order status right now. Please try again or contact support@chicx.in.",
+            }
 
     async def _get_order_history(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Get user's order history."""
-        limit = args.get("limit", 5)
+        """Get user's order history via CHICX backend API."""
+        limit = min(args.get("limit", 5), 20)
         status_filter = args.get("status_filter")
 
         logger.info(
-            f"Getting order history: user_phone={self._user_phone}, "
-            f"limit={limit}, status_filter={status_filter}"
+            f"Getting order history via CHICX API: phone={self._user_phone}, "
+            f"limit={limit}, status={status_filter}"
         )
 
-        # TODO: Implement actual order history lookup
-        return {
-            "orders": [],
-            "total_orders": 0,
-            "message": "No orders found for this phone number. Have you made a purchase on chicx.in?",
-        }
+        try:
+            result = await self._chicx_client.get_order_by_phone(
+                phone=self._user_phone,
+                limit=limit,
+                status=status_filter,
+            )
+            return result
+        except ChicxAPIError as e:
+            logger.error(f"CHICX API error getting order history: {e}")
+            return {
+                "orders": [],
+                "total_orders": 0,
+                "message": "Unable to get order history right now. Please try again or contact support@chicx.in.",
+            }
+
+    # =========================================================================
+    # FAQ Tool - Local pgvector semantic search
+    # =========================================================================
 
     async def _search_faq(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Search FAQs using semantic search."""
+        """Search FAQs using pgvector semantic search (local DB)."""
         query = args["query"]
         category = args.get("category")
-        limit = args.get("limit", 3)
+        limit = min(args.get("limit", 3), 5)
 
         logger.info(f"Searching FAQs: query={query}, category={category}, limit={limit}")
 
-        # TODO: Implement actual FAQ search using pgvector
+        embedding_service = EmbeddingService(self._db)
+
+        faqs = await embedding_service.search_faqs(
+            query=query,
+            category=category,
+            limit=limit,
+        )
+
+        if not faqs:
+            # Fallback to text search if semantic search returns nothing
+            faqs = await self._text_search_faqs(query, category, limit)
+
+        if not faqs:
+            return {
+                "faqs": [],
+                "message": "I couldn't find specific information about that. For detailed help, please contact support@chicx.in or call our helpline.",
+            }
+
         return {
-            "faqs": [],
-            "message": "For detailed help, please contact support@chicx.in",
+            "faqs": faqs,
         }
+
+    async def _text_search_faqs(
+        self,
+        query: str,
+        category: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Fallback text-based FAQ search using ILIKE."""
+        conditions = ["is_active = true"]
+        params: dict[str, Any] = {"limit": limit, "query": f"%{query}%"}
+
+        conditions.append("(question ILIKE :query OR answer ILIKE :query)")
+
+        if category:
+            conditions.append("category = :category")
+            params["category"] = category
+
+        where_clause = " AND ".join(conditions)
+
+        sql = text(f"""
+            SELECT id, question, answer, category
+            FROM faqs
+            WHERE {where_clause}
+            LIMIT :limit
+        """)
+
+        result = await self._db.execute(sql, params)
+        rows = result.fetchall()
+
+        return [
+            {
+                "id": str(row.id),
+                "question": row.question,
+                "answer": row.answer,
+                "category": row.category,
+            }
+            for row in rows
+        ]
 
 
 class WhatsAppService:
@@ -299,29 +398,18 @@ class WhatsAppService:
     # ========================================================================
 
     async def is_duplicate_message(self, wa_message_id: str) -> bool:
-        """Check if a message has already been processed.
-
-        Args:
-            wa_message_id: WhatsApp message ID
-
-        Returns:
-            True if message was already processed, False otherwise
-        """
+        """Check if a message has already been processed."""
         key = f"wa:msg:processed:{wa_message_id}"
         exists = await self._redis.exists(key)
         return bool(exists)
 
     async def mark_message_processed(self, wa_message_id: str) -> None:
-        """Mark a message as processed for deduplication.
-
-        Args:
-            wa_message_id: WhatsApp message ID
-        """
+        """Mark a message as processed for deduplication."""
         key = f"wa:msg:processed:{wa_message_id}"
         await self._redis.setex(key, MESSAGE_DEDUP_TTL_SECONDS, "1")
 
     # ========================================================================
-    # User Management
+    # User Management (minimal - just for conversation tracking)
     # ========================================================================
 
     async def get_or_create_user(self, phone: str) -> User:
@@ -333,7 +421,7 @@ class WhatsAppService:
         Returns:
             User model instance
         """
-        # Normalize phone number (ensure it starts with country code)
+        # Normalize phone number
         normalized_phone = phone.lstrip("+")
 
         # Try to find existing user
@@ -360,16 +448,7 @@ class WhatsAppService:
         user: User,
         channel: ChannelType = ChannelType.WHATSAPP,
     ) -> Conversation:
-        """Get active conversation or create a new one.
-
-        Args:
-            user: User model instance
-            channel: Communication channel type
-
-        Returns:
-            Conversation model instance
-        """
-        # Look for active conversation in last 24 hours
+        """Get active conversation or create a new one."""
         result = await self._db.execute(
             select(Conversation)
             .where(
@@ -383,7 +462,6 @@ class WhatsAppService:
         conversation = result.scalar_one_or_none()
 
         if conversation is None:
-            # Create new conversation
             conversation = Conversation(
                 user_id=user.id,
                 channel=channel,
@@ -405,18 +483,7 @@ class WhatsAppService:
         message_type: DBMessageType = DBMessageType.TEXT,
         wa_message_id: str | None = None,
     ) -> MessageModel:
-        """Save a message to the database.
-
-        Args:
-            conversation: Conversation model instance
-            role: Message role (user, assistant, system)
-            content: Message content
-            message_type: Type of message content
-            wa_message_id: Optional WhatsApp message ID
-
-        Returns:
-            MessageModel instance
-        """
+        """Save a message to the database."""
         message = MessageModel(
             conversation_id=conversation.id,
             role=role,
@@ -436,18 +503,8 @@ class WhatsAppService:
         """Get Redis key for conversation context."""
         return f"wa:context:{user_phone}"
 
-    async def get_conversation_context(
-        self,
-        user_phone: str,
-    ) -> list[dict[str, str]]:
-        """Get conversation context from Redis.
-
-        Args:
-            user_phone: User's phone number
-
-        Returns:
-            List of message dicts with role and content
-        """
+    async def get_conversation_context(self, user_phone: str) -> list[dict[str, str]]:
+        """Get conversation context from Redis."""
         key = self._get_context_key(user_phone)
         context_json = await self._redis.get(key)
 
@@ -464,17 +521,9 @@ class WhatsAppService:
         user_phone: str,
         messages: list[dict[str, str]],
     ) -> None:
-        """Update conversation context in Redis.
-
-        Args:
-            user_phone: User's phone number
-            messages: List of message dicts with role and content
-        """
+        """Update conversation context in Redis."""
         key = self._get_context_key(user_phone)
-
-        # Limit context size
         limited_messages = messages[-CONTEXT_MESSAGE_LIMIT:]
-
         await self._redis.setex(
             key,
             CONVERSATION_TTL_SECONDS,
@@ -487,16 +536,7 @@ class WhatsAppService:
         role: str,
         content: str,
     ) -> list[dict[str, str]]:
-        """Add a message to the conversation context.
-
-        Args:
-            user_phone: User's phone number
-            role: Message role (user, assistant)
-            content: Message content
-
-        Returns:
-            Updated context list
-        """
+        """Add a message to the conversation context."""
         context = await self.get_conversation_context(user_phone)
         context.append({"role": role, "content": content})
         await self.update_conversation_context(user_phone, context)
@@ -506,25 +546,8 @@ class WhatsAppService:
     # Message Processing
     # ========================================================================
 
-    async def process_message(
-        self,
-        message: Message,
-    ) -> str | None:
-        """Process an incoming WhatsApp message.
-
-        This method:
-        1. Checks for duplicate messages
-        2. Gets or creates user and conversation
-        3. Extracts message content
-        4. Sends to LLM for response
-        5. Sends response back to user
-
-        Args:
-            message: Parsed WhatsApp message
-
-        Returns:
-            Assistant's response text, or None if message was skipped
-        """
+    async def process_message(self, message: Message) -> str | None:
+        """Process an incoming WhatsApp message."""
         wa_message_id = message.message_id
         sender_phone = message.sender_phone
 
@@ -537,7 +560,7 @@ class WhatsAppService:
             logger.info(f"Skipping duplicate message: {wa_message_id}")
             return None
 
-        # Mark as processed immediately to prevent race conditions
+        # Mark as processed immediately
         await self.mark_message_processed(wa_message_id)
 
         # Get or create user
@@ -550,7 +573,6 @@ class WhatsAppService:
         user_text = message.get_text_content()
 
         if not user_text:
-            # Handle non-text messages
             if message.type == MessageType.IMAGE:
                 user_text = "[User sent an image]"
                 if message.image and message.image.caption:
@@ -578,7 +600,6 @@ class WhatsAppService:
             response_text = await self._get_llm_response(
                 user_phone=sender_phone,
                 user_message=user_text,
-                user_id=user.id,
             )
         except Exception as e:
             logger.exception(f"Error getting LLM response: {e}")
@@ -603,18 +624,8 @@ class WhatsAppService:
         self,
         user_phone: str,
         user_message: str,
-        user_id: uuid.UUID | None = None,
     ) -> str:
-        """Get response from LLM with tool calling.
-
-        Args:
-            user_phone: User's phone number
-            user_message: User's message text
-            user_id: Optional user ID for tool context
-
-        Returns:
-            Assistant's response text
-        """
+        """Get response from LLM with tool calling."""
         # Get conversation context
         context = await self.get_conversation_context(user_phone)
 
@@ -622,11 +633,7 @@ class WhatsAppService:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": get_system_prompt("whatsapp")},
         ]
-
-        # Add context messages
         messages.extend(context)
-
-        # Add current user message
         messages.append({"role": "user", "content": user_message})
 
         # Get LLM client
@@ -637,7 +644,6 @@ class WhatsAppService:
             db=self._db,
             redis_client=self._redis,
             user_phone=user_phone,
-            user_id=user_id,
         )
 
         # Get response with tool calling
@@ -652,7 +658,7 @@ class WhatsAppService:
 
             response_text = result["content"] or "I apologize, I couldn't generate a response."
 
-            # Update context with new messages
+            # Update context
             await self.add_to_context(user_phone, "user", user_message)
             await self.add_to_context(user_phone, "assistant", response_text)
 
@@ -668,43 +674,23 @@ class WhatsAppService:
             raise
 
     async def process_status_update(self, status: Status) -> None:
-        """Process a message status update.
-
-        Args:
-            status: Status update object
-        """
+        """Process a message status update."""
         logger.info(
             f"Status update: message_id={status.id}, status={status.status}, "
             f"recipient={status.recipient_id}"
         )
 
-        # Handle failed messages
         if status.status == StatusType.FAILED:
             logger.error(
-                f"Message delivery failed: message_id={status.id}, "
-                f"errors={status.errors}"
+                f"Message delivery failed: message_id={status.id}, errors={status.errors}"
             )
-            # TODO: Implement retry logic or notification
 
     # ========================================================================
     # Message Sending
     # ========================================================================
 
-    async def _send_api_request(
-        self,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Send a request to the WhatsApp API.
-
-        Args:
-            payload: Request payload
-
-        Returns:
-            API response as dict
-
-        Raises:
-            MessageSendError: If the request fails
-        """
+    async def _send_api_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send a request to the WhatsApp API."""
         url = f"{WHATSAPP_API_BASE_URL}/{self._settings.whatsapp_phone_number_id}/messages"
 
         client = await self._get_http_client()
@@ -715,12 +701,9 @@ class WhatsAppService:
             return response.json()
         except httpx.HTTPStatusError as e:
             logger.error(
-                f"WhatsApp API error: status={e.response.status_code}, "
-                f"body={e.response.text}"
+                f"WhatsApp API error: status={e.response.status_code}, body={e.response.text}"
             )
-            raise MessageSendError(
-                f"Failed to send message: {e.response.status_code}"
-            ) from e
+            raise MessageSendError(f"Failed to send message: {e.response.status_code}") from e
         except httpx.RequestError as e:
             logger.error(f"WhatsApp API request error: {e}")
             raise MessageSendError(f"Failed to connect to WhatsApp API: {e}") from e
@@ -731,19 +714,8 @@ class WhatsAppService:
         text: str,
         preview_url: bool = False,
     ) -> dict[str, Any]:
-        """Send a text message.
-
-        Args:
-            to: Recipient phone number
-            text: Message text
-            preview_url: Whether to show URL preview
-
-        Returns:
-            API response
-        """
-        # WhatsApp has a 4096 character limit per message
+        """Send a text message."""
         if len(text) > 4096:
-            # Split into multiple messages
             chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
             result = {}
             for chunk in chunks:
@@ -761,17 +733,7 @@ class WhatsAppService:
         buttons: list[tuple[str, str]],
         header: str | None = None,
     ) -> dict[str, Any]:
-        """Send an interactive button message.
-
-        Args:
-            to: Recipient phone number
-            body: Message body text
-            buttons: List of (id, title) tuples (max 3)
-            header: Optional header text
-
-        Returns:
-            API response
-        """
+        """Send an interactive button message."""
         payload = OutboundInteractiveMessage.create_button_message(
             to=to,
             body=body,
@@ -788,18 +750,7 @@ class WhatsAppService:
         sections: list[dict[str, Any]],
         header: str | None = None,
     ) -> dict[str, Any]:
-        """Send an interactive list message.
-
-        Args:
-            to: Recipient phone number
-            body: Message body text
-            button_text: Text for the list button
-            sections: List of section objects
-            header: Optional header text
-
-        Returns:
-            API response
-        """
+        """Send an interactive list message."""
         payload = OutboundInteractiveMessage.create_list_message(
             to=to,
             body=body,
@@ -816,17 +767,7 @@ class WhatsAppService:
         language_code: str = "en",
         components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Send a template message.
-
-        Args:
-            to: Recipient phone number
-            template_name: Name of the approved template
-            language_code: Language code
-            components: Optional template components
-
-        Returns:
-            API response
-        """
+        """Send a template message."""
         payload = OutboundTemplateMessage.create(
             to=to,
             template_name=template_name,
@@ -836,14 +777,7 @@ class WhatsAppService:
         return await self._send_api_request(payload.model_dump())
 
     async def mark_as_read(self, message_id: str) -> dict[str, Any] | None:
-        """Mark a message as read.
-
-        Args:
-            message_id: WhatsApp message ID
-
-        Returns:
-            API response or None if it fails
-        """
+        """Mark a message as read."""
         url = f"{WHATSAPP_API_BASE_URL}/{self._settings.whatsapp_phone_number_id}/messages"
 
         payload = MarkAsReadPayload(message_id=message_id)
@@ -863,13 +797,5 @@ async def get_whatsapp_service(
     db: AsyncSession,
     redis_client: redis.Redis,
 ) -> WhatsAppService:
-    """Create a WhatsApp service instance.
-
-    Args:
-        db: Database session
-        redis_client: Redis client
-
-    Returns:
-        WhatsAppService instance
-    """
+    """Create a WhatsApp service instance."""
     return WhatsAppService(db=db, redis_client=redis_client)

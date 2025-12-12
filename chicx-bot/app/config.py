@@ -39,10 +39,19 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
 
+    # Embeddings (OpenAI or compatible)
+    openai_api_key: str = ""
+    embedding_model: str = "text-embedding-ada-002"
+    embedding_base_url: str = "https://api.openai.com/v1"
+
     # Exotel (Voice)
     exotel_sid: str = ""
     exotel_api_key: str = ""
     exotel_api_token: str = ""
+
+    # Bolna (Voice Agent)
+    bolna_base_url: str = "http://localhost:5001"
+    bolna_api_key: str = ""
 
     # CHICX Backend
     chicx_api_base_url: str = ""

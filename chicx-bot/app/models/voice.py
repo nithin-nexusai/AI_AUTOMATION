@@ -19,12 +19,12 @@ class CallDirection(str, enum.Enum):
 
 
 class CallStatus(str, enum.Enum):
-    """Call status."""
+    """Call status/outcome."""
 
-    RINGING = "ringing"
-    ANSWERED = "answered"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    RESOLVED = "resolved"  # Bot handled successfully
+    ESCALATED = "escalated"  # Transferred to human
+    MISSED = "missed"  # Call not answered
+    FAILED = "failed"  # Technical error
 
 
 class Call(Base):
@@ -35,33 +35,38 @@ class Call(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False, index=True
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True, index=True
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
-    exotel_call_id: Mapped[str] = mapped_column(
-        String(100), unique=True, nullable=False, index=True
+    phone: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    exotel_call_id: Mapped[str | None] = mapped_column(
+        String(100), unique=True, nullable=True, index=True
+    )
+    bolna_call_id: Mapped[str | None] = mapped_column(
+        String(100), unique=True, nullable=True, index=True
     )
     direction: Mapped[CallDirection] = mapped_column(
         Enum(CallDirection), default=CallDirection.INBOUND
     )
     status: Mapped[CallStatus] = mapped_column(
-        Enum(CallStatus), default=CallStatus.RINGING
+        Enum(CallStatus), default=CallStatus.RESOLVED
     )
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     recording_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(10), nullable=True)  # e.g., "ta", "hi", "en"
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    conversation: Mapped["Conversation"] = relationship(  # noqa: F821
+    conversation: Mapped["Conversation | None"] = relationship(  # noqa: F821
         "Conversation", back_populates="call"
     )
-    user: Mapped["User"] = relationship("User", back_populates="calls")  # noqa: F821
+    user: Mapped["User | None"] = relationship("User", back_populates="calls")  # noqa: F821
     transcript: Mapped["CallTranscript | None"] = relationship(
         "CallTranscript", back_populates="call", uselist=False
     )

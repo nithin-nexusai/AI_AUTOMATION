@@ -118,3 +118,9 @@ Specification documents are in `/docs/`:
 - `CHICX_Environment_Setup.docx` - Local dev setup guide
 - `CHICX_LLM_Prompt_Library.docx` - System prompts and templates
 - `CHICX_Conversation_Flows.docx` - Bot flow diagrams
+
+
+
+Important thing is that we are doing only the chatbot the products, orders api has to come from the other backend team
+so do this accordingly
+we need shiprocket integration for tracking and razorpay for user payment tracking
