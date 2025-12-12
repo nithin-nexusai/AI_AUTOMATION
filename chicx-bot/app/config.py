@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # Bolna (Voice Agent)
     bolna_base_url: str = "http://localhost:5001"
     bolna_api_key: str = ""
+    bolna_webhook_secret: str = ""  # Secret for webhook authentication
+
+    # Admin Dashboard
+    admin_api_key: str = ""  # API key for admin endpoints
 
     # CHICX Backend
     chicx_api_base_url: str = ""

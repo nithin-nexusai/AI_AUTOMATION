@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.session import get_db
+from app.api.deps import BolnaAuth
 from app.models.voice import Call, CallTranscript
 from app.models.conversation import Conversation, Message, MessageRole, MessageType, ConversationStatus
 from app.services.chicx_api import get_chicx_client, ChicxAPIError
@@ -85,6 +86,7 @@ async def health() -> dict[str, str]:
 async def handle_transcript(
     payload: TranscriptPayload,
     db: AsyncSession = Depends(get_db),
+    _auth: BolnaAuth = None,
 ) -> dict[str, str]:
     """Handle transcription result from Bolna.
 
@@ -133,6 +135,7 @@ async def handle_transcript(
 async def handle_tool_call(
     payload: ToolCallPayload,
     db: AsyncSession = Depends(get_db),
+    _auth: BolnaAuth = None,
 ) -> dict[str, Any]:
     """Handle tool execution request from Bolna.
 
@@ -164,6 +167,7 @@ async def handle_tool_call(
 async def handle_call_complete(
     payload: CallCompletePayload,
     db: AsyncSession = Depends(get_db),
+    _auth: BolnaAuth = None,
 ) -> dict[str, str]:
     """Handle call completion notification from Bolna.
 

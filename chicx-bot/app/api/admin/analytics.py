@@ -19,6 +19,7 @@ from sqlalchemy import select, func, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.api.deps import AdminAuth
 from app.models.user import User
 from app.models.conversation import Conversation, Message, ConversationStatus, MessageRole
 from app.models.voice import Call, CallStatus
@@ -36,6 +37,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 @router.get("/overview")
 async def get_overview(
     db: AsyncSession = Depends(get_db),
+    _auth: AdminAuth = None,
 ) -> dict[str, Any]:
     """Get dashboard overview - today's snapshot.
 
@@ -119,6 +121,7 @@ async def get_overview(
 @router.get("/conversations")
 async def list_conversations(
     db: AsyncSession = Depends(get_db),
+    _auth: AdminAuth = None,
     status: str | None = Query(default=None, description="Filter by status"),
     search: str | None = Query(default=None, description="Search by phone number"),
     page: int = Query(default=1, ge=1),
@@ -192,6 +195,7 @@ async def list_conversations(
 async def get_conversation_history(
     conversation_id: str,
     db: AsyncSession = Depends(get_db),
+    _auth: AdminAuth = None,
 ) -> dict[str, Any]:
     """Get chat history for a conversation (popup view).
 
@@ -244,6 +248,7 @@ async def get_conversation_history(
 @router.get("/calls")
 async def list_calls(
     db: AsyncSession = Depends(get_db),
+    _auth: AdminAuth = None,
     status: str | None = Query(default=None, description="Filter by status"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
@@ -305,6 +310,7 @@ async def list_calls(
 async def get_call_audio(
     call_id: str,
     db: AsyncSession = Depends(get_db),
+    _auth: AdminAuth = None,
 ) -> dict[str, Any]:
     """Get audio URL for a call (S3 pre-signed URL).
 
@@ -339,6 +345,7 @@ async def get_call_audio(
 @router.get("/catalog-gaps")
 async def get_catalog_gaps(
     db: AsyncSession = Depends(get_db),
+    _auth: AdminAuth = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict[str, Any]:
     """Get 'no results' searches for catalog gap analysis.
@@ -385,6 +392,7 @@ async def get_catalog_gaps(
 @router.get("/voice-usage")
 async def get_voice_usage(
     db: AsyncSession = Depends(get_db),
+    _auth: AdminAuth = None,
     year: int | None = Query(default=None, description="Year (defaults to current)"),
     month: int | None = Query(default=None, ge=1, le=12, description="Month (defaults to current)"),
 ) -> dict[str, Any]:

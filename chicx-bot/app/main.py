@@ -4,14 +4,21 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
 import redis.asyncio as redis
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
 from app.api.admin import health, analytics
 from app.api.webhooks import whatsapp, exotel, bolna
 
 settings = get_settings()
+
+# Rate limiter - uses client IP address
+limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -37,10 +44,14 @@ app = FastAPI(
     redoc_url="/redoc" if settings.is_development else None,
 )
 
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.is_development else [],
+    allow_origins=["*"] if settings.is_development else ["https://dashboard.chicx.in"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
