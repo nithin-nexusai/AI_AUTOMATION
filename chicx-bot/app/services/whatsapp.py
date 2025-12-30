@@ -107,29 +107,49 @@ class ChicxToolExecutor:
         Returns:
             Dictionary containing the tool execution result
         """
+        from app.services.analytics import log_tool_call
+
         # Validate arguments
         is_valid, error_msg = validate_tool_arguments(tool_name, arguments)
         if not is_valid:
             logger.warning(f"Invalid tool arguments: {error_msg}")
             return {"error": error_msg}
 
+        result = None
+        success = True
+
         try:
             if tool_name == ToolName.SEARCH_PRODUCTS:
-                return await self._search_products(arguments)
+                result = await self._search_products(arguments)
             elif tool_name == ToolName.GET_PRODUCT_DETAILS:
-                return await self._get_product_details(arguments)
+                result = await self._get_product_details(arguments)
             elif tool_name == ToolName.GET_ORDER_STATUS:
-                return await self._get_order_status(arguments)
+                result = await self._get_order_status(arguments)
             elif tool_name == ToolName.GET_ORDER_HISTORY:
-                return await self._get_order_history(arguments)
+                result = await self._get_order_history(arguments)
             elif tool_name == ToolName.SEARCH_FAQ:
-                return await self._search_faq(arguments)
+                result = await self._search_faq(arguments)
+            elif tool_name == ToolName.TRACK_SHIPMENT:
+                result = await self._track_shipment(arguments)
             else:
                 logger.error(f"Unknown tool: {tool_name}")
-                return {"error": f"Unknown tool: {tool_name}"}
+                result = {"error": f"Unknown tool: {tool_name}"}
+                success = False
         except Exception as e:
             logger.exception(f"Error executing tool {tool_name}: {e}")
-            return {"error": f"Failed to execute {tool_name}: {str(e)}"}
+            result = {"error": f"Failed to execute {tool_name}: {str(e)}"}
+            success = False
+
+        # Log analytics event for tool call
+        await log_tool_call(
+            db=self._db,
+            tool_name=tool_name,
+            arguments=arguments,
+            result_success=success and "error" not in (result or {}),
+            channel="whatsapp",
+        )
+
+        return result or {"error": "No result"}
 
     # =========================================================================
     # Product Tools - Call CHICX Backend API
@@ -191,19 +211,45 @@ class ChicxToolExecutor:
     # =========================================================================
 
     async def _get_order_status(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Get order status via CHICX backend API."""
+        """Get order status via CHICX backend API.
+        
+        Security: Verifies order belongs to caller before returning details.
+        """
+        from app.utils.phone import normalize_phone
+        
         order_id = args["order_id"]
 
-        logger.info(f"Getting order status via CHICX API: order_id={order_id}")
+        logger.info(f"Getting order status via CHICX API: order_id={order_id}, user={self._user_phone}")
 
         try:
             order = await self._chicx_client.get_order(order_id)
+            
             if not order:
                 return {
                     "error": "order_not_found",
                     "message": f"Order '{order_id}' not found. Please check the order ID from your confirmation email or SMS.",
                 }
+            
+            # Security check: Verify order belongs to caller
+            order_phone = order.get("phone", "")
+            normalized_caller = normalize_phone(self._user_phone)
+            normalized_order = normalize_phone(order_phone)
+            
+            if normalized_caller != normalized_order:
+                # Unauthorized access attempt
+                logger.warning(
+                    f"WhatsApp unauthorized order access: "
+                    f"caller={self._user_phone} (normalized={normalized_caller}) "
+                    f"tried order={order_id} belonging to={order_phone} (normalized={normalized_order})"
+                )
+                return {
+                    "error": "order_not_found",
+                    "message": f"Order '{order_id}' not found in your account. Please check the order ID.",
+                }
+            
+            # Authorized - return order details
             return order
+            
         except ChicxAPIError as e:
             logger.error(f"CHICX API error getting order: {e}")
             return {
@@ -307,6 +353,39 @@ class ChicxToolExecutor:
             }
             for row in rows
         ]
+
+    async def _track_shipment(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Track shipment via Shiprocket API."""
+        from app.services.shiprocket import get_shiprocket_client, ShiprocketAPIError
+
+        awb_number = args["awb_number"]
+
+        logger.info(f"Tracking shipment via Shiprocket: AWB={awb_number}")
+
+        try:
+            shiprocket = get_shiprocket_client()
+            result = await shiprocket.track_by_awb(awb_number)
+
+            if not result.get("found"):
+                return {
+                    "found": False,
+                    "message": f"No tracking information found for AWB {awb_number}. Please check the tracking number.",
+                }
+
+            return result
+
+        except ShiprocketAPIError as e:
+            logger.error(f"Shiprocket API error: {e}")
+            return {
+                "error": "tracking_unavailable",
+                "message": "Unable to fetch tracking information right now. Please try again later or check the courier website directly.",
+            }
+        except Exception as e:
+            logger.error(f"Error tracking shipment: {e}")
+            return {
+                "error": "tracking_failed",
+                "message": "Unable to track shipment. Please try again.",
+            }
 
 
 class WhatsAppService:

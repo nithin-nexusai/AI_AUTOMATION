@@ -44,15 +44,12 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-ada-002"
     embedding_base_url: str = "https://api.openai.com/v1"
 
-    # Exotel (Voice)
-    exotel_sid: str = ""
-    exotel_api_key: str = ""
-    exotel_api_token: str = ""
-
-    # Bolna (Voice Agent)
-    bolna_base_url: str = "http://localhost:5001"
-    bolna_api_key: str = ""
-    bolna_webhook_secret: str = ""  # Secret for webhook authentication
+    # Bolna (Voice Agent) - Managed Platform
+    # Bolna handles all voice AI, telephony, and call recording
+    bolna_base_url: str = "https://api.bolna.dev"
+    bolna_api_key: str = ""  # Required - get from Bolna dashboard
+    bolna_webhook_secret: str = ""  # Required for webhook authentication
+    bolna_confirmation_agent_id: str = ""  # Agent ID for outbound confirmation calls
 
     # Admin Dashboard
     admin_api_key: str = ""  # API key for admin endpoints
@@ -61,7 +58,9 @@ class Settings(BaseSettings):
     chicx_api_base_url: str = ""
     chicx_api_key: str = ""
 
-    # Shiprocket
+    # Shiprocket (for live shipment tracking)
+    shiprocket_email: str = ""  # API user email
+    shiprocket_password: str = ""  # API user password
     shiprocket_webhook_secret: str = ""
 
     @property

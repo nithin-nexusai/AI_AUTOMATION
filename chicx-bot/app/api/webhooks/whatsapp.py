@@ -10,7 +10,7 @@ Reference: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 
@@ -94,52 +94,9 @@ async def verify_webhook(
 # ============================================================================
 
 
-async def _process_webhook_async(
-    payload: WhatsAppWebhookPayload,
-    db: DbSession,
-    redis_client: RedisClient,
-) -> None:
-    """Process webhook payload asynchronously.
-
-    This function runs in a background task to avoid blocking the response
-    to Meta (which expects a quick 200 OK).
-
-    Args:
-        payload: Parsed webhook payload
-        db: Database session
-        redis_client: Redis client
-    """
-    service = WhatsAppService(db=db, redis_client=redis_client)
-
-    try:
-        # Process messages
-        messages = payload.get_messages()
-        for message in messages:
-            try:
-                await service.process_message(message)
-            except Exception as e:
-                logger.exception(
-                    f"Error processing message {message.id}: {e}"
-                )
-
-        # Process status updates
-        statuses = payload.get_statuses()
-        for status in statuses:
-            try:
-                await service.process_status_update(status)
-            except Exception as e:
-                logger.exception(
-                    f"Error processing status {status.id}: {e}"
-                )
-
-    finally:
-        await service.close()
-
-
 @router.post("", status_code=200)
 async def receive_webhook(
     request: Request,
-    background_tasks: BackgroundTasks,
     db: DbSession,
     redis_client: RedisClient,
     x_hub_signature_256: Annotated[str | None, Header()] = None,
@@ -159,7 +116,6 @@ async def receive_webhook(
 
     Args:
         request: FastAPI request object
-        background_tasks: FastAPI background tasks
         db: Database session (injected)
         redis_client: Redis client (injected)
         x_hub_signature_256: HMAC SHA256 signature header
@@ -223,21 +179,8 @@ async def receive_webhook(
         # Still return 200 to acknowledge receipt
         return {"status": "ignored"}
 
-    # Process in background if there are messages or statuses
+    # Process messages and statuses
     if message_count > 0 or status_count > 0:
-        # Note: We can't use the injected db session in background tasks
-        # because it will be closed after the response. The background task
-        # needs to create its own session. For now, we process synchronously
-        # but quickly to return 200 to Meta.
-        #
-        # In a production system, you would want to:
-        # 1. Push to a message queue (Redis, SQS, etc.)
-        # 2. Have a separate worker process the queue
-        #
-        # For this implementation, we use a simple approach that works
-        # for moderate traffic.
-
-        # Process synchronously but keep it fast
         service = WhatsAppService(db=db, redis_client=redis_client)
         try:
             # Process messages

@@ -11,8 +11,6 @@ Key characteristics:
 - Focus on women's fashion e-commerce
 """
 
-from typing import Any
-
 
 # Main system prompt for the WhatsApp bot assistant
 WHATSAPP_SYSTEM_PROMPT = """You are CHICX Assistant, a friendly and helpful AI customer service representative for CHICX, a Direct-to-Consumer (D2C) women's fashion e-commerce brand in India.
@@ -299,34 +297,6 @@ ORDER_STATUS_DESCRIPTIONS = {
 }
 
 
-# Quick reply suggestions for common scenarios
-QUICK_REPLIES = {
-    "greeting": [
-        "Browse new arrivals",
-        "Track my order",
-        "Size guide",
-        "Return policy",
-    ],
-    "after_search": [
-        "Show more options",
-        "Filter by price",
-        "Different category",
-        "View product details",
-    ],
-    "after_product_details": [
-        "Check size availability",
-        "Similar products",
-        "Different color",
-        "Buy on website",
-    ],
-    "after_order_status": [
-        "Track another order",
-        "Contact support",
-        "Browse products",
-    ],
-}
-
-
 def get_system_prompt(channel: str = "whatsapp") -> str:
     """Get the appropriate system prompt for a channel.
 
@@ -374,125 +344,3 @@ def get_order_status_description(status: str, language: str = "en") -> str:
 
     descriptions = ORDER_STATUS_DESCRIPTIONS[status_lower]
     return descriptions.get(language, descriptions["en"])
-
-
-def get_quick_replies(context: str) -> list[str]:
-    """Get suggested quick replies for a conversation context.
-
-    Args:
-        context: The conversation context (e.g., "greeting", "after_search")
-
-    Returns:
-        List of quick reply suggestions.
-    """
-    return QUICK_REPLIES.get(context, QUICK_REPLIES["greeting"])
-
-
-def format_product_message(product: dict[str, Any], language: str = "en") -> str:
-    """Format a product for display in chat.
-
-    Args:
-        product: Product data dictionary with name, price, category, etc.
-        language: Language for formatting
-
-    Returns:
-        Formatted product string for WhatsApp.
-    """
-    name = product.get("name", "Product")
-    price = product.get("price", 0)
-    category = product.get("category", "")
-    url = product.get("product_url", "chicx.in")
-
-    if language == "ta":
-        return f"*{name}*\nவகை: {category}\nவிலை: Rs.{price}\nவாங்க: {url}"
-    elif language == "tanglish":
-        return f"*{name}*\nCategory: {category}\nPrice: Rs.{price}\nBuy here: {url}"
-    else:
-        return f"*{name}*\nCategory: {category}\nPrice: Rs.{price}\nBuy here: {url}"
-
-
-def format_order_summary(order: dict[str, Any], language: str = "en") -> str:
-    """Format an order summary for display in chat.
-
-    Args:
-        order: Order data dictionary
-        language: Language for formatting
-
-    Returns:
-        Formatted order summary string.
-    """
-    order_id = order.get("chicx_order_id", order.get("order_id", "N/A"))
-    status = order.get("status", "unknown")
-    total = order.get("total_amount", 0)
-    item_count = order.get("item_count", 0)
-    placed_at = order.get("placed_at", "")
-
-    status_desc = get_order_status_description(status, language)
-
-    if language == "tanglish":
-        return f"""*Order #{order_id}*
-Items: {item_count}
-Total: Rs.{total}
-Status: {status_desc}"""
-    else:
-        return f"""*Order #{order_id}*
-Items: {item_count}
-Total: Rs.{total}
-Status: {status_desc}"""
-
-
-# Template messages for proactive notifications
-NOTIFICATION_TEMPLATES = {
-    "order_shipped": {
-        "en": "Great news! Your order #{order_id} has been shipped. Track it with: {tracking_url}",
-        "ta": "Good news! உங்க order #{order_id} ship ஆயிடுச்சு. Track பண்ண: {tracking_url}",
-        "tanglish": "Good news! Unga order #{order_id} ship aagiduchu. Track panna: {tracking_url}",
-        "ml": "Good news! നിങ്ങളുടെ order #{order_id} ship ആയി. Track ചെയ്യാൻ: {tracking_url}",
-        "manglish": "Good news! Ningalude order #{order_id} ship aayi. Track cheyyaan: {tracking_url}",
-        "hi": "Good news! आपका order #{order_id} ship हो गया। Track करें: {tracking_url}",
-        "hinglish": "Good news! Aapka order #{order_id} ship ho gaya. Track karo: {tracking_url}",
-    },
-    "order_delivered": {
-        "en": "Your order #{order_id} has been delivered! Hope you love it. Share your feedback at chicx.in",
-        "ta": "Order #{order_id} deliver ஆயிடுச்சு! Enjoy பண்ணுங்க!",
-        "tanglish": "Order #{order_id} deliver aagiduchu! Enjoy pannunga!",
-        "ml": "Order #{order_id} deliver ആയി! Enjoy ചെയ്യൂ!",
-        "manglish": "Order #{order_id} deliver aayi! Enjoy cheyyu!",
-        "hi": "Order #{order_id} deliver हो गया! Enjoy करें!",
-        "hinglish": "Order #{order_id} deliver ho gaya! Enjoy karo!",
-    },
-    "order_out_for_delivery": {
-        "en": "Your order #{order_id} is out for delivery! It should reach you today.",
-        "ta": "Order #{order_id} delivery-க்கு வந்துருச்சு! இன்னைக்கே வரும்.",
-        "tanglish": "Order #{order_id} out for delivery! Innaike varum.",
-        "ml": "Order #{order_id} delivery-ക്ക് പുറപ്പെട്ടു! ഇന്ന് എത്തും.",
-        "manglish": "Order #{order_id} out for delivery! Innu ethum.",
-        "hi": "Order #{order_id} delivery के लिए निकला! आज पहुंच जाएगा।",
-        "hinglish": "Order #{order_id} out for delivery! Aaj pahunch jayega.",
-    },
-}
-
-
-def get_notification_template(
-    notification_type: str, language: str = "en", **kwargs: Any
-) -> str:
-    """Get a formatted notification template.
-
-    Args:
-        notification_type: Type of notification (e.g., "order_shipped")
-        language: Language code
-        **kwargs: Variables to substitute in the template
-
-    Returns:
-        Formatted notification message.
-    """
-    if notification_type not in NOTIFICATION_TEMPLATES:
-        return ""
-
-    templates = NOTIFICATION_TEMPLATES[notification_type]
-    template = templates.get(language, templates["en"])
-
-    try:
-        return template.format(**kwargs)
-    except KeyError:
-        return template

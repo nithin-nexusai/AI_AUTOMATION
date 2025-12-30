@@ -12,8 +12,8 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
-from app.api.admin import health, analytics
-from app.api.webhooks import whatsapp, exotel, bolna
+from app.api.admin import health, stats
+from app.api.webhooks import whatsapp, bolna, chicx
 
 settings = get_settings()
 
@@ -51,7 +51,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.is_development else ["https://dashboard.chicx.in"],
+    allow_origins=["*"] if settings.is_development else ["https://api.chicx.in"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,7 +59,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
-app.include_router(analytics.router, tags=["Dashboard"])
+app.include_router(stats.router, tags=["Stats"])
 app.include_router(whatsapp.router, tags=["WhatsApp"])
-app.include_router(exotel.router, tags=["Voice"])
-app.include_router(bolna.router, tags=["Bolna"])
+app.include_router(bolna.router, tags=["Voice"])  # Bolna handles all voice/telephony
+app.include_router(chicx.router, tags=["CHICX Notifications"])  # CHICX backend notifications

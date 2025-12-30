@@ -13,18 +13,6 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 
-class WebhookVerification(BaseModel):
-    """Schema for WhatsApp webhook verification request (GET).
-
-    Meta sends this during webhook setup to verify the endpoint.
-    """
-    hub_mode: str = Field(alias="hub.mode")
-    hub_verify_token: str = Field(alias="hub.verify_token")
-    hub_challenge: str = Field(alias="hub.challenge")
-
-    model_config = {"populate_by_name": True}
-
-
 # ============================================================================
 # Message Types
 # ============================================================================
@@ -405,19 +393,6 @@ class WhatsAppWebhookPayload(BaseModel):
                     statuses.extend(change.value.statuses)
         return statuses
 
-    def get_contacts(self) -> list[Contact]:
-        """Extract all contacts from the webhook payload.
-
-        Returns:
-            List of Contact objects from all entries and changes.
-        """
-        contacts: list[Contact] = []
-        for entry in self.entry:
-            for change in entry.changes:
-                if change.value.contacts:
-                    contacts.extend(change.value.contacts)
-        return contacts
-
     def get_phone_number_id(self) -> str | None:
         """Get the business phone number ID from metadata.
 
@@ -428,22 +403,6 @@ class WhatsAppWebhookPayload(BaseModel):
             for change in entry.changes:
                 return change.value.metadata.phone_number_id
         return None
-
-    def is_message_webhook(self) -> bool:
-        """Check if this webhook contains messages.
-
-        Returns:
-            True if the webhook contains at least one message.
-        """
-        return len(self.get_messages()) > 0
-
-    def is_status_webhook(self) -> bool:
-        """Check if this webhook contains status updates.
-
-        Returns:
-            True if the webhook contains at least one status update.
-        """
-        return len(self.get_statuses()) > 0
 
 
 # ============================================================================

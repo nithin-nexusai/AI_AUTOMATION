@@ -1,5 +1,6 @@
 """Admin API endpoints."""
 
-from app.api.admin import health, analytics
+from app.api.admin import health, stats
 
-__all__ = ["health", "analytics"]
+__all__ = ["health", "stats"]
+

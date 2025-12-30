@@ -1,0 +1,617 @@
+# CHICX Bot - Backend Integration Guide
+
+## Overview
+
+This document provides all the information needed for the backend team to:
+1. Build a dashboard that displays bot analytics
+2. Trigger WhatsApp/Voice notifications to customers
+3. Provide APIs that the bot consumes for product/order data
+
+---
+
+## Section 1: Stats APIs (Bot → Dashboard)
+
+The bot exposes these endpoints for the dashboard to pull data.
+
+**Base URL:** `https://{BOT_SERVER}/api/stats`
+**Authentication:** `X-API-Key: {ADMIN_API_KEY}` header
+
+### 1.1 Overview Stats
+
+```
+GET /api/stats/overview
+```
+
+**Response:**
+```json
+{
+  "total_conversations": 45,
+  "orders_tracked": 23,
+  "inbound_calls": 12,
+  "messages_today": 156
+}
+```
+
+### 1.2 Messages Per Day (Trend Chart)
+
+```
+GET /api/stats/messages-per-day?days=30
+```
+
+**Query Parameters:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| days | int | 30 | Number of days (1-90) |
+
+**Response:**
+```json
+{
+  "data": [
+    {"date": "2025-12-01", "count": 142},
+    {"date": "2025-12-02", "count": 198},
+    ...
+  ]
+}
+```
+
+### 1.3 Conversations List
+
+```
+GET /api/stats/conversations
+```
+
+**Query Parameters:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| status | string | - | Filter: active, closed, escalated |
+| search | string | - | Search by phone number |
+| page | int | 1 | Page number |
+| limit | int | 20 | Results per page (1-100) |
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "phone": "919876543210",
+      "status": "active",
+      "channel": "whatsapp",
+      "message_count": 12,
+      "started_at": "2025-12-27T10:30:00Z"
+    }
+  ],
+  "total": 145,
+  "page": 1,
+  "limit": 20
+}
+```
+
+### 1.4 Calls List
+
+```
+GET /api/stats/calls
+```
+
+**Query Parameters:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| status | string | - | Filter: resolved, escalated, missed, failed |
+| page | int | 1 | Page number |
+| limit | int | 20 | Results per page (1-100) |
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "phone": "919876543210",
+      "status": "resolved",
+      "duration_seconds": 145,
+      "language": "ta",
+      "started_at": "2025-12-27T10:30:00Z",
+      "has_recording": true
+    }
+  ],
+  "total": 89,
+  "page": 1,
+  "limit": 20
+}
+```
+
+### 1.5 Call Details
+
+```
+GET /api/stats/calls/{call_id}
+```
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "phone": "919876543210",
+  "status": "resolved",
+  "duration_seconds": 145,
+  "language": "ta",
+  "started_at": "2025-12-27T10:30:00Z",
+  "ended_at": "2025-12-27T10:32:25Z",
+  "transcript": "Customer: Hi, I want to track my order...",
+  "has_recording": true
+}
+```
+
+### 1.6 Call Recording
+
+```
+GET /api/stats/calls/{call_id}/audio
+```
+
+**Response:**
+```json
+{
+  "call_id": "uuid",
+  "audio_url": "https://storage.bolna.dev/recordings/abc123.mp3",
+  "duration_seconds": 145
+}
+```
+
+---
+
+## Section 2: Notification Webhooks (Backend → Bot)
+
+The backend calls these endpoints to trigger customer notifications.
+
+**Base URL:** `https://{BOT_SERVER}/webhooks/chicx`
+**Authentication:** `X-CHICX-Secret: {CHICX_API_KEY}` header
+**Content-Type:** `application/json`
+
+### 2.1 Cart Abandonment Reminder
+
+**When to call:** Customer has items in cart for 30+ minutes without checkout
+
+```
+POST /webhooks/chicx/cart-reminder
+```
+
+**Request Body:**
+```json
+{
+  "phone": "9876543210",
+  "customer_name": "Priya",
+  "product_name": "Blue Silk Saree",
+  "product_image": "https://chicx.in/images/saree.jpg",
+  "cart_total": 2499.00,
+  "checkout_url": "https://chicx.in/checkout/abc123"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| phone | string | Yes | Customer phone (10 digits) |
+| customer_name | string | No | Customer name for personalization |
+| product_name | string | Yes | Main product in cart |
+| product_image | string | No | Product image URL |
+| cart_total | number | No | Total cart value |
+| checkout_url | string | No | Direct checkout link |
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "message": "Cart reminder sent to 9876543210",
+  "phone": "9876543210",
+  "wa_message_id": "wamid.xxx"
+}
+```
+
+### 2.2 Order Status Update
+
+**When to call:** Order status changes (placed, shipped, out for delivery, delivered)
+
+```
+POST /webhooks/chicx/order-update
+```
+
+**Request Body:**
+```json
+{
+  "phone": "9876543210",
+  "order_id": "ORD123456",
+  "order_status": "Shipped",
+  "tracking_url": "https://shiprocket.com/track/abc",
+  "delivery_date": "2025-12-30"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| phone | string | Yes | Customer phone |
+| order_id | string | Yes | Order ID |
+| order_status | string | Yes | New status |
+| tracking_url | string | No | Tracking link |
+| delivery_date | string | No | Expected delivery date |
+
+**Recommended Status Values:**
+- `Order Placed`
+- `Order Confirmed`
+- `Shipped`
+- `Out for Delivery`
+- `Delivered`
+- `Cancelled`
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "message": "Order update notification sent to 9876543210",
+  "order_id": "ORD123456",
+  "order_status": "Shipped",
+  "wa_message_id": "wamid.xxx"
+}
+```
+
+### 2.3 New Product Announcement
+
+**When to call:** New product launch, flash sale, special promotion
+
+```
+POST /webhooks/chicx/new-product
+```
+
+**Request Body:**
+```json
+{
+  "phones": ["9876543210", "9123456789", "9555555555"],
+  "product_name": "Designer Lehenga",
+  "product_price": 4999.00,
+  "product_image": "https://chicx.in/images/lehenga.jpg",
+  "product_url": "https://chicx.in/products/lehenga"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| phones | array | Yes | List of phone numbers |
+| product_name | string | Yes | Product name |
+| product_price | number | Yes | Product price |
+| product_image | string | No | Product image URL |
+| product_url | string | No | Product page link |
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "message": "New product broadcast completed",
+  "sent_count": 3,
+  "failed_count": 0,
+  "total": 3
+}
+```
+
+### 2.4 Order Confirmation Call (COD)
+
+**When to call:** COD order placed, needs verbal confirmation
+
+```
+POST /webhooks/chicx/confirm-order
+```
+
+**Request Body:**
+```json
+{
+  "phone": "9876543210",
+  "order_id": "ORD123456",
+  "customer_name": "Rahul",
+  "items": [
+    {"name": "Blue Saree", "qty": 1, "price": 2499},
+    {"name": "Cotton Kurti", "qty": 2, "price": 799}
+  ],
+  "total_amount": 4097.00,
+  "cod": true,
+  "delivery_address": "123 Main Street, Chennai 600001"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| phone | string | Yes | Customer phone |
+| order_id | string | Yes | Order ID |
+| customer_name | string | No | Customer name |
+| items | array | No | Order items list |
+| items[].name | string | Yes | Item name |
+| items[].qty | int | No | Quantity (default: 1) |
+| items[].price | number | No | Item price |
+| total_amount | number | Yes | Order total |
+| cod | boolean | No | Is COD order (default: false) |
+| delivery_address | string | No | Delivery address |
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "message": "Confirmation call initiated for order ORD123456",
+  "order_id": "ORD123456",
+  "call_id": "bolna_call_xyz",
+  "phone": "9876543210"
+}
+```
+
+---
+
+## Section 3: APIs Bot Consumes (Backend → Bot)
+
+The bot calls these endpoints to answer customer queries about products and orders.
+
+**Base URL:** `https://{CHICX_API_BASE_URL}`
+**Authentication:** `Authorization: Bearer {CHICX_API_KEY}`
+
+### 3.1 Product Search
+
+```
+GET /api/get_products.php
+```
+
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| search | string | Search query |
+| category | string | Category filter |
+| min_price | number | Minimum price |
+| max_price | number | Maximum price |
+| limit | int | Max results |
+
+**Expected Response:**
+```json
+{
+  "status": true,
+  "products": [
+    {
+      "id": "PROD123",
+      "name": "Blue Silk Saree",
+      "category": "sarees",
+      "price": 2499.00,
+      "description": "Beautiful handwoven silk saree...",
+      "image_url": "https://chicx.in/images/saree.jpg",
+      "product_url": "https://chicx.in/products/blue-silk-saree",
+      "sizes": ["Free Size"],
+      "colors": ["Blue", "Red", "Green"],
+      "in_stock": true
+    }
+  ],
+  "total_count": 45
+}
+```
+
+### 3.2 Product Details
+
+```
+GET /api/get_product.php?product_id=PROD123
+```
+
+**Expected Response:**
+```json
+{
+  "status": true,
+  "product": {
+    "id": "PROD123",
+    "name": "Blue Silk Saree",
+    "category": "sarees",
+    "price": 2499.00,
+    "description": "Beautiful handwoven silk saree with intricate border work...",
+    "image_url": "https://chicx.in/images/saree.jpg",
+    "product_url": "https://chicx.in/products/blue-silk-saree",
+    "sizes": ["Free Size"],
+    "colors": ["Blue", "Red", "Green"],
+    "in_stock": true,
+    "material": "Silk",
+    "care": "Dry clean only"
+  }
+}
+```
+
+### 3.3 Order by ID
+
+```
+GET /api/get_order.php?order_id=ORD123456
+```
+
+**Expected Response:**
+```json
+{
+  "status": true,
+  "order": {
+    "order_id": "ORD123456",
+    "phone": "919876543210",
+    "customer_name": "Priya",
+    "order_status": "Shipped",
+    "placed_at": "2025-12-25T14:30:00Z",
+    "total_amount": 2499.00,
+    "items": [
+      {"name": "Blue Silk Saree", "qty": 1, "price": 2499}
+    ],
+    "payment": {
+      "payment_method": "Razorpay",
+      "payment_id": "pay_NxY123456",
+      "payment_status": "Paid",
+      "amount": 2499.00
+    },
+    "shipping": {
+      "awb_number": "SR123456789",
+      "courier": "Delhivery",
+      "tracking_url": "https://shiprocket.com/track/SR123456789",
+      "estimated_delivery": "2025-12-30"
+    },
+    "delivery_address": {
+      "address": "123 Main Street",
+      "city": "Chennai",
+      "state": "Tamil Nadu",
+      "pincode": "600001"
+    }
+  }
+}
+```
+
+### 3.4 Orders by Phone
+
+```
+GET /api/get_order.php?phone=9876543210&limit=5
+```
+
+**Expected Response:**
+```json
+{
+  "status": true,
+  "orders": [
+    {
+      "order_id": "ORD123456",
+      "order_status": "Shipped",
+      "placed_at": "2025-12-25T14:30:00Z",
+      "total_amount": 2499.00,
+      "item_count": 1,
+      "items_summary": "Blue Silk Saree"
+    },
+    {
+      "order_id": "ORD123400",
+      "order_status": "Delivered",
+      "placed_at": "2025-12-20T10:00:00Z",
+      "total_amount": 1599.00,
+      "item_count": 2,
+      "items_summary": "Cotton Kurti, Palazzo"
+    }
+  ],
+  "total_orders": 5
+}
+```
+
+---
+
+## Section 4: WhatsApp Templates
+
+These message templates must be created and approved in Meta Business Manager before the bot can send notifications.
+
+### Template: cart_reminder
+
+**Category:** Marketing
+**Language:** English
+
+**Content:**
+```
+Hi {{1}}!
+
+You left *{{2}}* in your cart worth {{3}}.
+
+Complete your purchase now before it sells out!
+```
+
+**Variables:**
+- {{1}} = Customer name
+- {{2}} = Product name
+- {{3}} = Cart total (e.g., "Rs.2499")
+
+**Button:** "Complete Order" → {{checkout_url}}
+
+---
+
+### Template: order_update
+
+**Category:** Utility
+**Language:** English
+
+**Content:**
+```
+Order Update
+
+Your order #{{1}} is now *{{2}}*.
+
+Track your order for live updates.
+```
+
+**Variables:**
+- {{1}} = Order ID
+- {{2}} = Order status
+
+**Button:** "Track Order" → {{tracking_url}}
+
+---
+
+### Template: new_product
+
+**Category:** Marketing
+**Language:** English
+
+**Content:**
+```
+New Arrival!
+
+*{{1}}* is now available at just Rs.{{2}}!
+
+Shop now before it's gone.
+```
+
+**Variables:**
+- {{1}} = Product name
+- {{2}} = Price
+
+**Button:** "Shop Now" → {{product_url}}
+
+---
+
+## Section 5: Environment Variables
+
+### Bot Server Needs (from CHICX Backend)
+
+```env
+CHICX_API_BASE_URL=https://api.chicx.in
+CHICX_API_KEY=your_backend_api_key
+```
+
+### Dashboard Needs (from Bot Server)
+
+```env
+BOT_API_BASE_URL=https://bot.chicx.in
+ADMIN_API_KEY=admin_api_key_for_stats
+CHICX_WEBHOOK_SECRET=webhook_secret_for_notifications
+```
+
+---
+
+## Section 6: Error Handling
+
+All endpoints return errors in this format:
+
+```json
+{
+  "status": "error",
+  "message": "Description of what went wrong",
+  "code": "ERROR_CODE"
+}
+```
+
+**Common Error Codes:**
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| UNAUTHORIZED | 401 | Invalid or missing API key |
+| NOT_FOUND | 404 | Resource not found |
+| VALIDATION_ERROR | 400 | Invalid request payload |
+| RATE_LIMITED | 429 | Too many requests |
+| INTERNAL_ERROR | 500 | Server error |
+
+---
+
+## Section 7: Dashboard Pages (Recommended)
+
+| Page | Description | API Used |
+|------|-------------|----------|
+| Overview | Key metrics + message trend chart | `/api/stats/overview`, `/api/stats/messages-per-day` |
+| Conversations | List of all WhatsApp conversations | `/api/stats/conversations` |
+| Voice Calls | Call logs with recordings | `/api/stats/calls`, `/api/stats/calls/{id}/audio` |
+| Send Notification | Forms to trigger cart/order notifications | `POST /webhooks/chicx/*` |
+
+---
+
+## Contact
+
+For technical questions or API access:
+- Bot Server Admin: [your-email]
+- API Documentation: [link-to-swagger-if-available]

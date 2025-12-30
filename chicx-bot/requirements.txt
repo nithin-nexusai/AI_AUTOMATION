@@ -25,6 +25,10 @@ openai>=1.10.0
 # Retry logic
 tenacity>=8.2.0
 
+# FAQ document processing
+pypdf>=4.0.0
+python-docx>=1.1.0
+
 # Rate limiting
 slowapi>=0.1.9
 

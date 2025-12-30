@@ -1,12 +1,13 @@
 """LLM tool definitions for CHICX WhatsApp bot function calling.
 
-This module defines the 5 core tools that the LLM can use to interact with
+This module defines the 6 core tools that the LLM can use to interact with
 the CHICX platform:
 1. search_products - Search the product catalog
 2. get_product_details - Get details of a specific product
 3. get_order_status - Track an order by ID
 4. get_order_history - List a user's past orders
 5. search_faq - Semantic search for FAQs using pgvector
+6. track_shipment - Track shipment via Shiprocket
 
 Tools are defined in OpenAI function calling format.
 """
@@ -221,6 +222,32 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "track_shipment",
+            "description": (
+                "Track a shipment in real-time using AWB (tracking) number. "
+                "Use this when the user wants live, detailed tracking information "
+                "including current location, delivery status, and tracking timeline. "
+                "Returns tracking details from the courier directly via Shiprocket."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "awb_number": {
+                        "type": "string",
+                        "description": (
+                            "The AWB (Air Waybill) or tracking number from the courier. "
+                            "This is usually provided in the shipping confirmation."
+                        ),
+                    },
+                },
+                "required": ["awb_number"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -233,30 +260,6 @@ def get_tool_definitions() -> list[dict[str, Any]]:
     return TOOL_DEFINITIONS.copy()
 
 
-def get_tool_by_name(name: str) -> dict[str, Any] | None:
-    """Get a specific tool definition by name.
-
-    Args:
-        name: The name of the tool to retrieve.
-
-    Returns:
-        The tool definition dict, or None if not found.
-    """
-    for tool in TOOL_DEFINITIONS:
-        if tool["function"]["name"] == name:
-            return tool.copy()
-    return None
-
-
-def get_tool_names() -> list[str]:
-    """Get a list of all available tool names.
-
-    Returns:
-        List of tool names as strings.
-    """
-    return [tool["function"]["name"] for tool in TOOL_DEFINITIONS]
-
-
 # Tool name constants for type-safe usage
 class ToolName:
     """Constants for tool names to avoid string typos."""
@@ -266,6 +269,7 @@ class ToolName:
     GET_ORDER_STATUS = "get_order_status"
     GET_ORDER_HISTORY = "get_order_history"
     SEARCH_FAQ = "search_faq"
+    TRACK_SHIPMENT = "track_shipment"
 
 
 # Mapping of tool names to their required parameters for validation
@@ -275,6 +279,7 @@ TOOL_REQUIRED_PARAMS: dict[str, list[str]] = {
     ToolName.GET_ORDER_STATUS: ["order_id"],
     ToolName.GET_ORDER_HISTORY: [],
     ToolName.SEARCH_FAQ: ["query"],
+    ToolName.TRACK_SHIPMENT: ["awb_number"],
 }
 
 
@@ -300,115 +305,3 @@ def validate_tool_arguments(tool_name: str, arguments: dict[str, Any]) -> tuple[
         return False, f"Missing required parameters for {tool_name}: {', '.join(missing)}"
 
     return True, None
-
-
-# Response schemas for documentation purposes
-TOOL_RESPONSE_SCHEMAS: dict[str, dict[str, Any]] = {
-    ToolName.SEARCH_PRODUCTS: {
-        "type": "object",
-        "properties": {
-            "products": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string"},
-                        "chicx_product_id": {"type": "string"},
-                        "name": {"type": "string"},
-                        "category": {"type": "string"},
-                        "price": {"type": "number"},
-                        "image_url": {"type": "string"},
-                        "product_url": {"type": "string"},
-                    },
-                },
-            },
-            "total_count": {"type": "integer"},
-            "has_more": {"type": "boolean"},
-        },
-    },
-    ToolName.GET_PRODUCT_DETAILS: {
-        "type": "object",
-        "properties": {
-            "id": {"type": "string"},
-            "chicx_product_id": {"type": "string"},
-            "name": {"type": "string"},
-            "description": {"type": "string"},
-            "category": {"type": "string"},
-            "price": {"type": "number"},
-            "image_url": {"type": "string"},
-            "product_url": {"type": "string"},
-            "variants": {
-                "type": "object",
-                "properties": {
-                    "sizes": {"type": "array", "items": {"type": "string"}},
-                    "colors": {"type": "array", "items": {"type": "string"}},
-                },
-            },
-            "is_active": {"type": "boolean"},
-        },
-    },
-    ToolName.GET_ORDER_STATUS: {
-        "type": "object",
-        "properties": {
-            "order_id": {"type": "string"},
-            "chicx_order_id": {"type": "string"},
-            "status": {"type": "string"},
-            "status_description": {"type": "string"},
-            "placed_at": {"type": "string", "format": "date-time"},
-            "total_amount": {"type": "number"},
-            "item_count": {"type": "integer"},
-            "tracking_number": {"type": "string"},
-            "estimated_delivery": {"type": "string"},
-            "shipping_address": {"type": "object"},
-            "events": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string"},
-                        "timestamp": {"type": "string", "format": "date-time"},
-                        "description": {"type": "string"},
-                    },
-                },
-            },
-        },
-    },
-    ToolName.GET_ORDER_HISTORY: {
-        "type": "object",
-        "properties": {
-            "orders": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "order_id": {"type": "string"},
-                        "chicx_order_id": {"type": "string"},
-                        "status": {"type": "string"},
-                        "placed_at": {"type": "string", "format": "date-time"},
-                        "total_amount": {"type": "number"},
-                        "item_count": {"type": "integer"},
-                        "items_summary": {"type": "string"},
-                    },
-                },
-            },
-            "total_orders": {"type": "integer"},
-        },
-    },
-    ToolName.SEARCH_FAQ: {
-        "type": "object",
-        "properties": {
-            "faqs": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "question": {"type": "string"},
-                        "answer": {"type": "string"},
-                        "category": {"type": "string"},
-                        "relevance_score": {"type": "number"},
-                    },
-                },
-            },
-        },
-    },
-}
