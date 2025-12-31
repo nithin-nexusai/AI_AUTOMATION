@@ -180,11 +180,7 @@ def chunk_text_as_faqs(text: str, chunk_size: int = 500) -> list[dict[str, str]]
 async def import_faqs(docs_dir: Path):
     """Import FAQs from documents directory."""
     settings = get_settings()
-    
-    if not settings.openai_api_key:
-        logger.error("OPENAI_API_KEY not configured. Cannot generate embeddings.")
-        return
-    
+
     # Find all PDF and DOCX files
     pdf_files = list(docs_dir.glob("*.pdf"))
     docx_files = list(docs_dir.glob("*.docx"))

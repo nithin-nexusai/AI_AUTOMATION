@@ -17,15 +17,13 @@ from app.models import (  # noqa: F401
     User,
     Conversation,
     Message,
-    Order,
-    OrderEvent,
-    Product,
     FAQ,
     Embedding,
     Call,
     CallTranscript,
     Template,
     AnalyticsEvent,
+    SearchLog,
 )
 
 config = context.config

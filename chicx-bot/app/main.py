@@ -4,21 +4,55 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
 import redis.asyncio as redis
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
+import logging
+
 from app.config import get_settings
-from app.api.admin import health, stats
+from app.core.llm import shutdown_llm_client
+from app.services.embedding import shutdown_embedding_client
+from app.api.admin import health, stats, recordings
 from app.api.webhooks import whatsapp, bolna, chicx
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
 # Rate limiter - uses client IP address
 limiter = Limiter(key_func=get_remote_address)
+
+
+async def _check_embeddings() -> None:
+    """Check if FAQ embeddings exist and warn if missing."""
+    from sqlalchemy import text
+    from app.db.session import async_session_maker
+
+    try:
+        async with async_session_maker() as db:
+            result = await db.execute(text("SELECT COUNT(*) FROM embeddings WHERE source_type = 'FAQ'"))
+            count = result.scalar() or 0
+
+            faq_result = await db.execute(text("SELECT COUNT(*) FROM faqs WHERE is_active = true"))
+            faq_count = faq_result.scalar() or 0
+
+            if faq_count > 0 and count == 0:
+                logger.warning(
+                    f"⚠️  No FAQ embeddings found! Semantic search will not work. "
+                    f"Run: python scripts/generate_embeddings.py"
+                )
+            elif count < faq_count:
+                logger.warning(
+                    f"⚠️  Only {count}/{faq_count} FAQs have embeddings. "
+                    f"Run: python scripts/generate_embeddings.py --force"
+                )
+            else:
+                logger.info(f"✓ FAQ embeddings ready: {count} embeddings for {faq_count} FAQs")
+    except Exception as e:
+        logger.warning(f"Could not check embeddings: {e}")
 
 
 @asynccontextmanager
@@ -30,8 +64,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         encoding="utf-8",
         decode_responses=True,
     )
+
+    # Check embeddings on startup
+    await _check_embeddings()
+
     yield
-    # Shutdown: Close Redis connection
+    # Shutdown: Close connections
+    await shutdown_llm_client()
+    await shutdown_embedding_client()
     await app.state.redis.close()
 
 
@@ -60,6 +100,7 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(stats.router, tags=["Stats"])
+app.include_router(recordings.router, tags=["Recordings"])
 app.include_router(whatsapp.router, tags=["WhatsApp"])
 app.include_router(bolna.router, tags=["Voice"])  # Bolna handles all voice/telephony
 app.include_router(chicx.router, tags=["CHICX Notifications"])  # CHICX backend notifications

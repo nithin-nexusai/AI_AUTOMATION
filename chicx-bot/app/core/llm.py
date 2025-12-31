@@ -1,15 +1,14 @@
-"""DeepSeek LLM client with OpenAI-compatible API.
+"""OpenRouter LLM client for chat completion with tool calling.
 
-This module provides an async client for interacting with DeepSeek's chat API,
-which uses the OpenAI API format. It includes retry logic, tool/function calling
-support, and proper error handling for production use.
+This module provides an async client for interacting with OpenRouter API,
+which provides access to multiple LLM providers with an OpenAI-compatible interface.
 """
 
 import json
 import logging
 from typing import Any
 
-from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError
+import httpx
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -25,53 +24,48 @@ logger = logging.getLogger(__name__)
 
 class LLMError(Exception):
     """Base exception for LLM-related errors."""
-
     pass
 
 
 class LLMConnectionError(LLMError):
     """Raised when connection to LLM API fails."""
-
     pass
 
 
 class LLMRateLimitError(LLMError):
     """Raised when rate limit is exceeded."""
-
     pass
 
 
 class LLMResponseError(LLMError):
     """Raised when LLM returns an invalid or unexpected response."""
-
     pass
 
 
-class DeepSeekClient:
-    """Async client for DeepSeek LLM API.
+class OpenRouterClient:
+    """Async client for OpenRouter API.
 
-    This client wraps the OpenAI-compatible API provided by DeepSeek,
-    adding retry logic, proper error handling, and support for tool calling.
+    OpenRouter provides access to multiple LLM providers (OpenAI, Anthropic, Google, etc.)
+    with an OpenAI-compatible API interface.
 
     Usage:
-        client = DeepSeekClient()
+        client = OpenRouterClient()
         response = await client.chat_completion(
             messages=[{"role": "user", "content": "Hello"}]
         )
     """
 
     def __init__(self) -> None:
-        """Initialize the DeepSeek client with settings from config."""
+        """Initialize the OpenRouter client with settings from config."""
         settings = get_settings()
 
-        if not settings.deepseek_api_key:
-            raise ValueError("DEEPSEEK_API_KEY is not configured")
+        if not settings.openrouter_api_key:
+            raise ValueError("OPENROUTER_API_KEY is not configured")
 
-        self._client = AsyncOpenAI(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
-        )
-        self._model = settings.deepseek_model
+        self._api_key = settings.openrouter_api_key
+        self._model = settings.openrouter_model or "google/gemini-2.0-flash-001"
+        self._base_url = "https://openrouter.ai/api/v1"
+        self._client = httpx.AsyncClient(timeout=60.0)
         self._settings = settings
 
     @property
@@ -80,7 +74,7 @@ class DeepSeekClient:
         return self._model
 
     @retry(
-        retry=retry_if_exception_type((APIConnectionError, RateLimitError)),
+        retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException, LLMRateLimitError)),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=30),
         before_sleep=before_sleep_log(logger, logging.WARNING),
@@ -95,15 +89,15 @@ class DeepSeekClient:
         max_tokens: int = 1024,
         stream: bool = False,
     ) -> dict[str, Any]:
-        """Send a chat completion request to DeepSeek.
+        """Send a chat completion request to OpenRouter.
 
         Args:
             messages: List of message objects with role and content.
             tools: Optional list of tool definitions for function calling.
-            tool_choice: Optional tool choice strategy ("auto", "none", or specific tool).
+            tool_choice: Optional tool choice strategy.
             temperature: Sampling temperature (0.0-2.0). Default 0.7.
             max_tokens: Maximum tokens in response. Default 1024.
-            stream: Whether to stream the response. Default False.
+            stream: Whether to stream the response. Default False (not implemented).
 
         Returns:
             dict containing the API response with the following structure:
@@ -116,28 +110,34 @@ class DeepSeekClient:
 
         Raises:
             LLMConnectionError: If connection to API fails after retries.
-            LLMRateLimitError: If rate limit is exceeded after retries.
+            LLMRateLimitError: If rate limit is exceeded.
             LLMResponseError: If API returns an unexpected response.
             LLMError: For other API errors.
         """
         try:
-            # Build request parameters
-            request_params: dict[str, Any] = {
+            url = f"{self._base_url}/chat/completions"
+
+            headers = {
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://chicx.in",
+                "X-Title": "CHICX WhatsApp Bot",
+            }
+
+            request_body: dict[str, Any] = {
                 "model": self._model,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
-                "stream": stream,
             }
 
-            # Add tools if provided
             if tools:
-                request_params["tools"] = tools
+                request_body["tools"] = tools
                 if tool_choice:
-                    request_params["tool_choice"] = tool_choice
+                    request_body["tool_choice"] = tool_choice
 
             logger.debug(
-                "Sending chat completion request",
+                "Sending chat completion request to OpenRouter",
                 extra={
                     "model": self._model,
                     "message_count": len(messages),
@@ -145,36 +145,42 @@ class DeepSeekClient:
                 },
             )
 
-            response = await self._client.chat.completions.create(**request_params)
+            response = await self._client.post(url, headers=headers, json=request_body)
 
-            # Extract response data
-            choice = response.choices[0]
-            message = choice.message
+            if response.status_code == 429:
+                raise LLMRateLimitError("OpenRouter API rate limit exceeded")
 
+            if response.status_code != 200:
+                error_text = response.text
+                logger.error(f"OpenRouter API error: {response.status_code} - {error_text}")
+                raise LLMError(f"OpenRouter API error: {response.status_code} - {error_text}")
+
+            data = response.json()
+
+            # Extract response (OpenAI format)
             result = {
-                "content": message.content,
+                "content": None,
                 "tool_calls": None,
-                "finish_reason": choice.finish_reason,
-                "usage": {
-                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                    "total_tokens": response.usage.total_tokens if response.usage else 0,
-                },
+                "finish_reason": "stop",
+                "usage": data.get("usage", {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                }),
             }
 
-            # Process tool calls if present
-            if message.tool_calls:
-                result["tool_calls"] = [
-                    {
-                        "id": tool_call.id,
-                        "type": tool_call.type,
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        },
-                    }
-                    for tool_call in message.tool_calls
-                ]
+            choices = data.get("choices", [])
+            if choices:
+                choice = choices[0]
+                message = choice.get("message", {})
+
+                result["content"] = message.get("content")
+                result["finish_reason"] = choice.get("finish_reason", "stop")
+
+                # Handle tool calls
+                if message.get("tool_calls"):
+                    result["tool_calls"] = message["tool_calls"]
+                    result["finish_reason"] = "tool_calls"
 
             logger.debug(
                 "Chat completion successful",
@@ -182,21 +188,20 @@ class DeepSeekClient:
                     "finish_reason": result["finish_reason"],
                     "has_content": bool(result["content"]),
                     "tool_call_count": len(result["tool_calls"]) if result["tool_calls"] else 0,
-                    "total_tokens": result["usage"]["total_tokens"],
+                    "total_tokens": result["usage"].get("total_tokens", 0),
                 },
             )
 
             return result
 
-        except APIConnectionError as e:
-            logger.error(f"Connection error to DeepSeek API: {e}")
-            raise LLMConnectionError(f"Failed to connect to DeepSeek API: {e}") from e
-        except RateLimitError as e:
-            logger.error(f"Rate limit exceeded for DeepSeek API: {e}")
-            raise LLMRateLimitError(f"DeepSeek API rate limit exceeded: {e}") from e
-        except APIError as e:
-            logger.error(f"DeepSeek API error: {e}")
-            raise LLMError(f"DeepSeek API error: {e}") from e
+        except httpx.ConnectError as e:
+            logger.error(f"Connection error to OpenRouter API: {e}")
+            raise LLMConnectionError(f"Failed to connect to OpenRouter API: {e}") from e
+        except httpx.TimeoutException as e:
+            logger.error(f"Timeout connecting to OpenRouter API: {e}")
+            raise LLMConnectionError(f"Timeout connecting to OpenRouter API: {e}") from e
+        except LLMError:
+            raise
         except Exception as e:
             logger.exception(f"Unexpected error in chat completion: {e}")
             raise LLMResponseError(f"Unexpected error: {e}") from e
@@ -244,8 +249,7 @@ class DeepSeekClient:
 
             response = await self.chat_completion(
                 messages=conversation,
-                tools=tools,
-                tool_choice="auto" if iterations < max_iterations else "none",
+                tools=tools if iterations < max_iterations else None,
                 temperature=temperature,
             )
 
@@ -307,9 +311,9 @@ class DeepSeekClient:
 
     async def close(self) -> None:
         """Close the client and release resources."""
-        await self._client.close()
+        await self._client.aclose()
 
-    async def __aenter__(self) -> "DeepSeekClient":
+    async def __aenter__(self) -> "OpenRouterClient":
         """Async context manager entry."""
         return self
 
@@ -342,14 +346,14 @@ class ToolExecutor:
 
 
 # Singleton instance for application-wide use
-_client_instance: DeepSeekClient | None = None
+_client_instance: OpenRouterClient | None = None
 
 
-def get_llm_client() -> DeepSeekClient:
+def get_llm_client() -> OpenRouterClient:
     """Get or create the global LLM client instance.
 
     Returns:
-        The singleton DeepSeekClient instance.
+        The singleton OpenRouterClient instance.
 
     Note:
         This creates a single instance that is reused across the application.
@@ -357,7 +361,7 @@ def get_llm_client() -> DeepSeekClient:
     """
     global _client_instance
     if _client_instance is None:
-        _client_instance = DeepSeekClient()
+        _client_instance = OpenRouterClient()
     return _client_instance
 
 

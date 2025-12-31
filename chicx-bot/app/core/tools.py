@@ -283,6 +283,88 @@ TOOL_REQUIRED_PARAMS: dict[str, list[str]] = {
 }
 
 
+def get_tool_by_name(name: str) -> dict[str, Any] | None:
+    """Get a tool definition by its name.
+
+    Args:
+        name: The name of the tool to find.
+
+    Returns:
+        The tool definition dict if found, None otherwise.
+    """
+    for tool in TOOL_DEFINITIONS:
+        if tool.get("function", {}).get("name") == name:
+            return tool
+    return None
+
+
+def get_tool_names() -> list[str]:
+    """Get a list of all available tool names.
+
+    Returns:
+        List of tool name strings.
+    """
+    return [tool["function"]["name"] for tool in TOOL_DEFINITIONS]
+
+
+# Response schemas for tools (used for validation/documentation)
+TOOL_RESPONSE_SCHEMAS: dict[str, dict[str, Any]] = {
+    ToolName.SEARCH_PRODUCTS: {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "name": {"type": "string"},
+                "price": {"type": "number"},
+                "image_url": {"type": "string"},
+            },
+        },
+    },
+    ToolName.GET_PRODUCT_DETAILS: {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "price": {"type": "number"},
+            "variants": {"type": "array"},
+            "url": {"type": "string"},
+        },
+    },
+    ToolName.GET_ORDER_STATUS: {
+        "type": "object",
+        "properties": {
+            "order_id": {"type": "string"},
+            "status": {"type": "string"},
+            "tracking_number": {"type": "string"},
+        },
+    },
+    ToolName.GET_ORDER_HISTORY: {
+        "type": "array",
+        "items": {"type": "object"},
+    },
+    ToolName.SEARCH_FAQ: {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+                "answer": {"type": "string"},
+            },
+        },
+    },
+    ToolName.TRACK_SHIPMENT: {
+        "type": "object",
+        "properties": {
+            "awb": {"type": "string"},
+            "status": {"type": "string"},
+            "location": {"type": "string"},
+        },
+    },
+}
+
+
 def validate_tool_arguments(tool_name: str, arguments: dict[str, Any]) -> tuple[bool, str | None]:
     """Validate that required arguments are provided for a tool.
 

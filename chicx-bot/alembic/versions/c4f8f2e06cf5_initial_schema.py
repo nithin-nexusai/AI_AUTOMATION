@@ -58,7 +58,7 @@ def upgrade() -> None:
         sa.Column('source_type', sa.Enum('faq', name='sourcetype'), nullable=False),
         sa.Column('source_id', sa.UUID(), nullable=False),
         sa.Column('chunk_text', sa.Text(), nullable=False),
-        sa.Column('embedding', Vector(1536), nullable=True),
+        sa.Column('embedding', Vector(768), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint('id')
     )

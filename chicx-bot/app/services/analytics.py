@@ -6,7 +6,6 @@ which are used by the Stats APIs for the dashboard.
 
 import logging
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession

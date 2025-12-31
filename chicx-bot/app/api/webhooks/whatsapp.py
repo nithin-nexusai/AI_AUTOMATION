@@ -10,7 +10,7 @@ Reference: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 

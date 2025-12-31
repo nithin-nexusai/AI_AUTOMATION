@@ -39,10 +39,16 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
 
-    # Embeddings (OpenAI or compatible)
+    # OpenRouter (LLM)
+    openrouter_api_key: str = ""
+    openrouter_model: str = "google/gemini-2.0-flash-001"  # LLM model for chat
+
+    # Google Gemini (Embeddings only)
+    gemini_api_key: str = ""
+    embedding_model: str = "text-embedding-004"  # Embedding model
+
+    # OpenAI (optional, for fallback)
     openai_api_key: str = ""
-    embedding_model: str = "text-embedding-ada-002"
-    embedding_base_url: str = "https://api.openai.com/v1"
 
     # Bolna (Voice Agent) - Managed Platform
     # Bolna handles all voice AI, telephony, and call recording
@@ -53,6 +59,10 @@ class Settings(BaseSettings):
 
     # Admin Dashboard
     admin_api_key: str = ""  # API key for admin endpoints
+
+    # Recording Retention
+    recording_retention_days: int = 90  # Days to keep recordings (0 = forever)
+    recording_cleanup_enabled: bool = True  # Enable automatic cleanup
 
     # CHICX Backend
     chicx_api_base_url: str = ""

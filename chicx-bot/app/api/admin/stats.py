@@ -199,28 +199,121 @@ async def list_conversations(
 async def list_calls(
     db: AsyncSession = Depends(get_db),
     _auth: AdminAuth = None,
-    status: str | None = Query(default=None, description="Filter by status"),
+    status: str | None = Query(default=None, description="Filter by status (resolved/escalated/missed/failed)"),
+    direction: str | None = Query(default=None, description="Filter by direction (inbound/outbound)"),
+    phone: str | None = Query(default=None, description="Search by phone number (partial match)"),
+    language: str | None = Query(default=None, description="Filter by language (en/ta/hi/ml)"),
+    has_recording: bool | None = Query(default=None, description="Filter by recording availability"),
+    date_from: str | None = Query(default=None, description="Start date (YYYY-MM-DD)"),
+    date_to: str | None = Query(default=None, description="End date (YYYY-MM-DD)"),
+    min_duration: int | None = Query(default=None, ge=0, description="Minimum duration in seconds"),
+    max_duration: int | None = Query(default=None, ge=0, description="Maximum duration in seconds"),
+    sort_by: str = Query(default="started_at", description="Sort field (started_at/duration_seconds/phone)"),
+    sort_order: str = Query(default="desc", description="Sort order (asc/desc)"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
-    """List calls with pagination (call log table)."""
+    """List calls with advanced filtering and pagination.
+
+    Supports filtering by:
+    - status: Call outcome (resolved/escalated/missed/failed)
+    - direction: Call direction (inbound/outbound)
+    - phone: Partial phone number search
+    - language: Language code (en/ta/hi/ml)
+    - has_recording: Whether call has a recording
+    - date_from/date_to: Date range filter
+    - min_duration/max_duration: Duration range filter
+
+    Supports sorting by started_at, duration_seconds, or phone.
+    """
+    from app.models.voice import CallDirection
+
     offset = (page - 1) * limit
+    filters_applied = {}
 
     query = select(Call)
 
+    # Status filter
     if status:
         try:
             status_enum = CallStatus(status)
             query = query.where(Call.status == status_enum)
+            filters_applied["status"] = status
         except ValueError:
             pass
+
+    # Direction filter
+    if direction:
+        try:
+            direction_enum = CallDirection(direction)
+            query = query.where(Call.direction == direction_enum)
+            filters_applied["direction"] = direction
+        except ValueError:
+            pass
+
+    # Phone search (partial match)
+    if phone:
+        query = query.where(Call.phone.ilike(f"%{phone}%"))
+        filters_applied["phone"] = phone
+
+    # Language filter
+    if language:
+        query = query.where(Call.language == language)
+        filters_applied["language"] = language
+
+    # Recording filter
+    if has_recording is not None:
+        if has_recording:
+            query = query.where(Call.recording_url.isnot(None))
+        else:
+            query = query.where(Call.recording_url.is_(None))
+        filters_applied["has_recording"] = has_recording
+
+    # Date range filter
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            query = query.where(Call.started_at >= from_date)
+            filters_applied["date_from"] = date_from
+        except ValueError:
+            pass
+
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            to_date = to_date + timedelta(days=1)  # Include the entire end date
+            query = query.where(Call.started_at < to_date)
+            filters_applied["date_to"] = date_to
+        except ValueError:
+            pass
+
+    # Duration range filter
+    if min_duration is not None:
+        query = query.where(Call.duration_seconds >= min_duration)
+        filters_applied["min_duration"] = min_duration
+
+    if max_duration is not None:
+        query = query.where(Call.duration_seconds <= max_duration)
+        filters_applied["max_duration"] = max_duration
 
     # Total count
     count_query = select(func.count()).select_from(query.subquery())
     total = await db.scalar(count_query) or 0
 
-    # Paginated results
-    query = query.order_by(desc(Call.started_at)).offset(offset).limit(limit)
+    # Sorting
+    sort_column = {
+        "started_at": Call.started_at,
+        "duration_seconds": Call.duration_seconds,
+        "phone": Call.phone,
+    }.get(sort_by, Call.started_at)
+
+    if sort_order == "asc":
+        query = query.order_by(sort_column.asc())
+    else:
+        query = query.order_by(sort_column.desc())
+
+    # Pagination
+    query = query.offset(offset).limit(limit)
     result = await db.execute(query)
     calls = result.scalars().all()
 
@@ -229,11 +322,14 @@ async def list_calls(
         items.append({
             "id": str(call.id),
             "phone": call.phone,
+            "direction": call.direction.value if call.direction else None,
             "status": call.status.value,
             "duration_seconds": call.duration_seconds,
             "language": call.language,
             "started_at": call.started_at.isoformat(),
+            "ended_at": call.ended_at.isoformat() if call.ended_at else None,
             "has_recording": bool(call.recording_url),
+            "has_transcript": bool(call.transcript),
         })
 
     return {
@@ -241,6 +337,7 @@ async def list_calls(
         "total": total,
         "page": page,
         "limit": limit,
+        "filters_applied": filters_applied,
     }
 
 

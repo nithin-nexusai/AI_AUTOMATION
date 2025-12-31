@@ -14,8 +14,6 @@ import hashlib
 import hmac
 import json
 import logging
-import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -24,7 +22,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.core.llm import get_llm_client, DeepSeekClient, LLMError
+from app.core.llm import get_llm_client, OpenRouterClient, LLMError
 from app.core.prompts import get_system_prompt
 from app.core.tools import get_tool_definitions, validate_tool_arguments, ToolName
 from app.models.user import User
@@ -36,7 +34,6 @@ from app.models.conversation import (
     MessageRole,
     MessageType as DBMessageType,
 )
-from app.models.knowledge import FAQ
 from app.services.embedding import EmbeddingService
 from app.services.chicx_api import get_chicx_client, ChicxAPIError
 from app.schemas.whatsapp import (
@@ -296,11 +293,33 @@ class ChicxToolExecutor:
 
         embedding_service = EmbeddingService(self._db)
 
+        # First search with category filter
         faqs = await embedding_service.search_faqs(
             query=query,
             category=category,
             limit=limit,
         )
+
+        # If query mentions specific products, also search without category
+        # to catch comprehensive policy documents
+        product_keywords = ["earring", "chain", "bracelet", "necklace", "ring", "jewel"]
+        query_lower = query.lower()
+        mentions_product = any(kw in query_lower for kw in product_keywords)
+
+        if mentions_product and category:
+            # Also search without category filter to find policy docs
+            all_faqs = await embedding_service.search_faqs(
+                query=query,
+                category=None,
+                limit=limit,
+            )
+            # Merge results, prioritizing higher relevance scores
+            seen_ids = {f["id"] for f in faqs}
+            for faq in all_faqs:
+                if faq["id"] not in seen_ids:
+                    faqs.append(faq)
+            # Sort by relevance and limit
+            faqs = sorted(faqs, key=lambda x: x.get("relevance_score", 0), reverse=True)[:limit]
 
         if not faqs:
             # Fallback to text search if semantic search returns nothing
@@ -324,12 +343,27 @@ class ChicxToolExecutor:
     ) -> list[dict[str, Any]]:
         """Fallback text-based FAQ search using ILIKE."""
         conditions = ["is_active = true"]
-        params: dict[str, Any] = {"limit": limit, "query": f"%{query}%"}
 
-        conditions.append("(question ILIKE :query OR answer ILIKE :query)")
+        # Extract keywords and search for any of them
+        keywords = [w.strip() for w in query.lower().split() if len(w.strip()) > 2]
+
+        # Build OR conditions for each keyword
+        keyword_conditions = []
+        params: dict[str, Any] = {"limit": limit}
+
+        for i, keyword in enumerate(keywords[:5]):  # Limit to 5 keywords
+            param_name = f"kw{i}"
+            params[param_name] = f"%{keyword}%"
+            keyword_conditions.append(f"(question ILIKE :{param_name} OR answer ILIKE :{param_name})")
+
+        if keyword_conditions:
+            conditions.append(f"({' OR '.join(keyword_conditions)})")
+        else:
+            # No valid keywords, return empty
+            return []
 
         if category:
-            conditions.append("category = :category")
+            conditions.append("LOWER(category) = LOWER(:category)")
             params["category"] = category
 
         where_clause = " AND ".join(conditions)
@@ -716,7 +750,7 @@ class WhatsAppService:
         messages.append({"role": "user", "content": user_message})
 
         # Get LLM client
-        llm_client: DeepSeekClient = get_llm_client()
+        llm_client: OpenRouterClient = get_llm_client()
 
         # Create tool executor
         tool_executor = ChicxToolExecutor(

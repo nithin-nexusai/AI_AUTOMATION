@@ -134,6 +134,8 @@ Use your tools effectively:
 
 5. **search_faq**: Use for policy questions, how-to questions, general queries
    - Topics: shipping, returns, sizing, payment, account, etc.
+   - When FAQs are found, answer DIRECTLY using the FAQ content - don't add extra disclaimers
+   - Only suggest contacting support if no relevant FAQ is found
 
 ## Response Format
 - Keep responses concise - WhatsApp users prefer shorter messages

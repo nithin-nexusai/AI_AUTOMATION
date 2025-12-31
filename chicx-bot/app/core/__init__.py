@@ -1,13 +1,13 @@
 """Core utilities for LLM, tools, and prompts.
 
 This module provides the core AI/ML infrastructure for the CHICX WhatsApp bot:
-- DeepSeek LLM client for natural language processing
+- OpenRouter LLM client for natural language processing
 - Tool definitions for function calling
 - System prompts for bot behavior
 """
 
 from app.core.llm import (
-    DeepSeekClient,
+    OpenRouterClient,
     ToolExecutor,
     LLMError,
     LLMConnectionError,
@@ -30,19 +30,14 @@ from app.core.prompts import (
     VOICE_SYSTEM_PROMPT,
     ERROR_RESPONSES,
     ORDER_STATUS_DESCRIPTIONS,
-    QUICK_REPLIES,
     get_system_prompt,
     get_error_response,
     get_order_status_description,
-    get_quick_replies,
-    format_product_message,
-    format_order_summary,
-    get_notification_template,
 )
 
 __all__ = [
     # LLM Client
-    "DeepSeekClient",
+    "OpenRouterClient",
     "ToolExecutor",
     "LLMError",
     "LLMConnectionError",
@@ -63,12 +58,7 @@ __all__ = [
     "VOICE_SYSTEM_PROMPT",
     "ERROR_RESPONSES",
     "ORDER_STATUS_DESCRIPTIONS",
-    "QUICK_REPLIES",
     "get_system_prompt",
     "get_error_response",
     "get_order_status_description",
-    "get_quick_replies",
-    "format_product_message",
-    "format_order_summary",
-    "get_notification_template",
 ]
