@@ -21,9 +21,7 @@ from app.models import (  # noqa: F401
     Embedding,
     Call,
     CallTranscript,
-    Template,
     AnalyticsEvent,
-    SearchLog,
 )
 
 config = context.config

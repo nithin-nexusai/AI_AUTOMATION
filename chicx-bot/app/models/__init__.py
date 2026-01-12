@@ -8,7 +8,7 @@ from app.models.user import User
 from app.models.conversation import Conversation, Message
 from app.models.knowledge import FAQ, Embedding
 from app.models.voice import Call, CallTranscript
-from app.models.system import Template, AnalyticsEvent, SearchLog
+from app.models.system import AnalyticsEvent
 
 __all__ = [
     "User",
@@ -18,7 +18,5 @@ __all__ = [
     "Embedding",
     "Call",
     "CallTranscript",
-    "Template",
     "AnalyticsEvent",
-    "SearchLog",
 ]

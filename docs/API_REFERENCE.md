@@ -84,6 +84,32 @@ Authorization: Bearer {CHICX_API_KEY}
 
 ## Notification Webhooks (CHICX → Bot)
 
+### Send OTP
+
+```
+POST /webhooks/chicx/send-otp
+X-CHICX-Secret: {CHICX_API_KEY}
+Content-Type: application/json
+
+{
+  "phone": "9876543210",
+  "otp": "123456",
+  "type": "forgot_password",
+  "customer_name": "Priya",
+  "order_id": "ORD123456"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| phone | string | Yes | Customer phone (10 digits) |
+| otp | string | Yes | 6-digit OTP |
+| type | string | No | `login`, `forgot_password`, `purchase_verification` |
+| customer_name | string | No | For personalization |
+| order_id | string | No | For purchase_verification only |
+
+---
+
 ### Cart Reminder
 
 ```
