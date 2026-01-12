@@ -31,19 +31,10 @@ router = APIRouter(prefix="/webhooks/chicx", tags=["CHICX Notifications"])
 
 
 class SendOTPPayload(BaseModel):
-    """Payload for sending OTP via WhatsApp.
-
-    Types:
-    - forgot_password: User forgot password on website
-    - purchase_verification: Verify purchase/checkout
-    - login: Login verification
-    """
+    """Payload for sending login OTP via WhatsApp."""
 
     phone: str
     otp: str
-    type: str = "login"  # forgot_password, purchase_verification, login
-    customer_name: str | None = None
-    order_id: str | None = None  # For purchase_verification
 
 
 class CartReminderPayload(BaseModel):
@@ -162,45 +153,21 @@ async def handle_send_otp(
     redis_client: aioredis.Redis = Depends(get_redis),
     _auth: bool = Depends(verify_chicx_webhook),
 ) -> dict[str, Any]:
-    """Send OTP to user via WhatsApp.
+    """Send login OTP to user via WhatsApp.
 
-    Called by CHICX backend when:
-    - User requests password reset (forgot_password)
-    - User makes a purchase and needs verification (purchase_verification)
-    - User logs in with OTP (login)
+    Called by CHICX backend when user logs in with OTP.
 
     Example request:
     ```json
     {
         "phone": "9876543210",
-        "otp": "123456",
-        "type": "forgot_password",
-        "customer_name": "Priya"
-    }
-    ```
-
-    For purchase verification:
-    ```json
-    {
-        "phone": "9876543210",
-        "otp": "123456",
-        "type": "purchase_verification",
-        "customer_name": "Priya",
-        "order_id": "ORD123456"
+        "otp": "123456"
     }
     ```
     """
-    logger.info(f"Send OTP webhook: type={payload.type}, phone={payload.phone}")
+    logger.info(f"Send OTP webhook: phone={payload.phone}")
 
     phone = normalize_phone(payload.phone)
-
-    # Map OTP type to template name
-    template_map = {
-        "login": "otp_login",
-        "forgot_password": "otp_password_reset",
-        "purchase_verification": "otp_purchase",
-    }
-    template_name = template_map.get(payload.type, "otp_login")
 
     # Build template components for authentication template
     # Meta authentication templates use: {{1}} = OTP code in body
@@ -229,21 +196,19 @@ async def handle_send_otp(
 
         result = await wa_service.send_template_message(
             to=phone,
-            template_name=template_name,
+            template_name="otp_login",
             language_code="en",
             components=components,
         )
 
         await wa_service.close()
 
-        logger.info(f"OTP sent successfully to {phone} (type: {payload.type}, template: {template_name})")
+        logger.info(f"Login OTP sent successfully to {phone}")
 
         return {
             "status": "ok",
             "message": f"OTP sent to {payload.phone}",
             "phone": payload.phone,
-            "type": payload.type,
-            "template": template_name,
             "wa_message_id": result.get("messages", [{}])[0].get("id"),
         }
 
@@ -253,7 +218,6 @@ async def handle_send_otp(
             "status": "error",
             "message": str(e),
             "phone": payload.phone,
-            "type": payload.type,
         }
 
 
