@@ -93,10 +93,7 @@ Content-Type: application/json
 
 {
   "phone": "9876543210",
-  "otp": "123456",
-  "type": "forgot_password",
-  "customer_name": "Priya",
-  "order_id": "ORD123456"
+  "otp": "123456"
 }
 ```
 
@@ -104,9 +101,6 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | phone | string | Yes | Customer phone (10 digits) |
 | otp | string | Yes | 6-digit OTP |
-| type | string | No | `login`, `forgot_password`, `purchase_verification` |
-| customer_name | string | No | For personalization |
-| order_id | string | No | For purchase_verification only |
 
 ---
 

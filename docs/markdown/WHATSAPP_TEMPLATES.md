@@ -136,24 +136,6 @@ This code expires in 10 minutes.
 
 ---
 
-### 1.2 `otp_password_reset`
-
-**Category:** Authentication
-**Channel:** PRIMARY
-
-Same structure as `otp_login`. The template name differentiates the use case for analytics.
-
----
-
-### 1.3 `otp_purchase`
-
-**Category:** Authentication
-**Channel:** PRIMARY
-
-Same structure as `otp_login`. Used for purchase verification OTPs.
-
----
-
 ## 2. Utility Templates
 
 ### 2.1 `order_update`
@@ -296,17 +278,9 @@ curl -X POST https://your-server.com/webhooks/chicx/send-otp \
   -H "X-CHICX-Secret: your_api_key" \
   -d '{
     "phone": "9876543210",
-    "otp": "123456",
-    "type": "login"
+    "otp": "123456"
   }'
 ```
-
-**OTP Types:**
-| Type | Template Used |
-|------|---------------|
-| `login` | `otp_login` |
-| `forgot_password` | `otp_password_reset` |
-| `purchase_verification` | `otp_purchase` |
 
 ---
 
@@ -432,8 +406,6 @@ curl -X POST https://your-server.com/webhooks/chicx/order-update \
 | Template | Category | Header | Body Params | Button |
 |----------|----------|--------|-------------|--------|
 | `otp_login` | Authentication | None | `{{1}}`=OTP | Copy Code |
-| `otp_password_reset` | Authentication | None | `{{1}}`=OTP | Copy Code |
-| `otp_purchase` | Authentication | None | `{{1}}`=OTP | Copy Code |
 | `order_update` | Utility | None | `{{1}}`=OrderID, `{{2}}`=Status | URL: Track Order |
 | `new_product` | Marketing | **IMAGE** | `{{1}}`=Product, `{{2}}`=Price | URL: Shop Now |
 | `sale_announcement` | Marketing | **IMAGE** | `{{1}}`=Title, `{{2}}`=Discount, `{{3}}`=Validity | URL: Shop Now |
