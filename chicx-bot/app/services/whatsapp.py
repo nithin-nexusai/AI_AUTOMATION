@@ -520,7 +520,7 @@ class WhatsAppService:
 
         expected_signature = signature[7:]  # Remove "sha256=" prefix
 
-        computed_signature = hmac.new(
+        computed_signature = hmac.HMAC(
             key=self._settings.whatsapp_app_secret.encode("utf-8"),
             msg=payload,
             digestmod=hashlib.sha256,

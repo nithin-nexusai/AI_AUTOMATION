@@ -292,8 +292,8 @@ curl -X POST https://your-server.com/webhooks/chicx/new-product \
   -H "X-CHICX-Secret: your_api_key" \
   -d '{
     "phones": ["9876543210", "9876543211"],
-    "product_name": "Designer Gold Earrings",
-    "product_price": 1299.00,
+    "title": "New Arrival!",
+    "body": "Designer Gold Earrings - ₹1299",
     "image_url": "https://cdn.chicx.in/posters/gold-earrings.png",
     "product_url": "https://chicx.in/product/designer-gold-earrings"
   }'
@@ -309,11 +309,10 @@ curl -X POST https://your-server.com/webhooks/chicx/sale-announcement \
   -H "X-CHICX-Secret: your_api_key" \
   -d '{
     "phones": ["9876543210", "9876543211"],
-    "sale_title": "Diwali Mega Sale",
-    "discount_text": "Up to 50% OFF",
+    "title": "Diwali Mega Sale",
+    "body": "Up to 50% OFF on all products!",
     "image_url": "https://cdn.chicx.in/posters/diwali-sale.png",
-    "sale_url": "https://chicx.in/sale/diwali",
-    "valid_till": "31st October"
+    "sale_url": "https://chicx.in/sale/diwali"
   }'
 ```
 
@@ -407,8 +406,8 @@ curl -X POST https://your-server.com/webhooks/chicx/order-update \
 |----------|----------|--------|-------------|--------|
 | `otp_login` | Authentication | None | `{{1}}`=OTP | Copy Code |
 | `order_update` | Utility | None | `{{1}}`=OrderID, `{{2}}`=Status | URL: Track Order |
-| `new_product` | Marketing | **IMAGE** | `{{1}}`=Product, `{{2}}`=Price | URL: Shop Now |
-| `sale_announcement` | Marketing | **IMAGE** | `{{1}}`=Title, `{{2}}`=Discount, `{{3}}`=Validity | URL: Shop Now |
+| `new_product` | Marketing | **IMAGE** | `{{1}}`=Title, `{{2}}`=Body | URL: Shop Now |
+| `sale_announcement` | Marketing | **IMAGE** | `{{1}}`=Title, `{{2}}`=Body | URL: Shop Now |
 | `cart_reminder` | Marketing | None | `{{1}}`=Name, `{{2}}`=Product, `{{3}}`=Total | URL: Complete Order |
 
 ---

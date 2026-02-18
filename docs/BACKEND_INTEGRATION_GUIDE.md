@@ -97,6 +97,16 @@ GET /api/stats/calls
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | status | string | - | Filter: resolved, escalated, missed, failed |
+| direction | string | - | Filter: inbound, outbound |
+| phone | string | - | Partial phone number search |
+| language | string | - | Filter: en, ta, hi, ml |
+| has_recording | boolean | - | Filter by recording availability |
+| date_from | string | - | Start date (YYYY-MM-DD) |
+| date_to | string | - | End date (YYYY-MM-DD) |
+| min_duration | int | - | Minimum call duration (seconds) |
+| max_duration | int | - | Maximum call duration (seconds) |
+| sort_by | string | started_at | Sort: started_at, duration_seconds, phone |
+| sort_order | string | desc | Sort order: asc, desc |
 | page | int | 1 | Page number |
 | limit | int | 20 | Results per page (1-100) |
 
@@ -108,6 +118,7 @@ GET /api/stats/calls
       "id": "uuid",
       "phone": "919876543210",
       "status": "resolved",
+      "direction": "inbound",
       "duration_seconds": 145,
       "language": "ta",
       "started_at": "2025-12-27T10:30:00Z",
@@ -116,7 +127,8 @@ GET /api/stats/calls
   ],
   "total": 89,
   "page": 1,
-  "limit": 20
+  "limit": 20,
+  "filters_applied": {"status": "resolved"}
 }
 ```
 
@@ -224,6 +236,16 @@ curl -X POST https://bot.chicx.in/webhooks/chicx/send-otp \
 - Backend should implement OTP expiry (recommended: 10 minutes)
 - Backend should implement rate limiting (recommended: max 5 OTPs per phone per hour)
 
+**API Field → Template Variable Mapping:**
+
+| Template Part | Variable | API Field | Fallback | Required |
+|---------------|----------|-----------|----------|----------|
+| Body | `{{1}}` | `otp` | — | ✅ Yes |
+| Button (Copy Code) | `{{1}}` | `otp` | — | ✅ Yes |
+
+> [!IMPORTANT]
+> Both `phone` and `otp` are **required**. The API will return a validation error if either is missing.
+
 ---
 
 ### 2.2 Cart Abandonment Reminder
@@ -264,6 +286,18 @@ POST /webhooks/chicx/cart-reminder
   "wa_message_id": "wamid.xxx"
 }
 ```
+
+**API Field → Template Variable Mapping:**
+
+| Template Part | Variable | API Field | Fallback | Required |
+|---------------|----------|-----------|----------|----------|
+| Body | `{{1}}` | `customer_name` | `"there"` | No |
+| Body | `{{2}}` | `product_name` | — | ✅ Yes |
+| Body | `{{3}}` | `cart_total` | `"your cart"` | No (formatted as `₹2499`) |
+| Button (URL) | Dynamic suffix | `checkout_url` | Button not sent | No |
+
+> [!IMPORTANT]
+> `phone` and `product_name` are **required**. Other fields have defaults but should be sent for better personalization.
 
 ### 2.3 Order Status Update
 
@@ -311,6 +345,17 @@ POST /webhooks/chicx/order-update
 }
 ```
 
+**API Field → Template Variable Mapping:**
+
+| Template Part | Variable | API Field | Fallback | Required |
+|---------------|----------|-----------|----------|----------|
+| Body | `{{1}}` | `order_id` | — | ✅ Yes |
+| Body | `{{2}}` | `order_status` | — | ✅ Yes |
+| Button (URL) | Dynamic suffix | `tracking_url` | Button not sent | No |
+
+> [!IMPORTANT]
+> `phone`, `order_id`, and `order_status` are all **required**.
+
 ### 2.4 New Product Announcement
 
 **When to call:** New product launch, flash sale, special promotion
@@ -323,9 +368,9 @@ POST /webhooks/chicx/new-product
 ```json
 {
   "phones": ["9876543210", "9123456789", "9555555555"],
-  "product_name": "Designer Lehenga",
-  "product_price": 4999.00,
-  "product_image": "https://chicx.in/images/lehenga.jpg",
+  "title": "New Arrival!",
+  "body": "Designer Lehenga - ₹4999",
+  "image_url": "https://chicx.in/images/lehenga.jpg",
   "product_url": "https://chicx.in/products/lehenga"
 }
 ```
@@ -333,9 +378,9 @@ POST /webhooks/chicx/new-product
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | phones | array | Yes | List of phone numbers |
-| product_name | string | Yes | Product name |
-| product_price | number | Yes | Product price |
-| product_image | string | No | Product image URL |
+| title | string | Yes | Template title (e.g., "New Arrival!") |
+| body | string | Yes | Template body (e.g., "Designer Lehenga - ₹4999") |
+| image_url | string | Yes | Product poster image URL (HTTPS) |
 | product_url | string | No | Product page link |
 
 **Response:**
@@ -349,7 +394,69 @@ POST /webhooks/chicx/new-product
 }
 ```
 
-### 2.5 Order Confirmation Call (COD)
+**API Field → Template Variable Mapping:**
+
+| Template Part | Variable | API Field | Fallback | Required |
+|---------------|----------|-----------|----------|----------|
+| Header (Image) | Image | `image_url` | — | ✅ Yes (must be HTTPS) |
+| Body | `{{1}}` | `title` | — | ✅ Yes |
+| Body | `{{2}}` | `body` | — | ✅ Yes |
+| Button (URL) | Dynamic suffix | `product_url` | Button not sent | No |
+
+> [!IMPORTANT]
+> `phones`, `title`, `body`, and `image_url` are all **required**. `image_url` must be a publicly accessible HTTPS URL. Maximum 1000 phones per request.
+
+### 2.5 Sale/Promotion Announcement
+
+**When to call:** Seasonal sale, flash sale, or promotional event
+
+```
+POST /webhooks/chicx/sale-announcement
+```
+
+**Request Body:**
+```json
+{
+  "phones": ["9876543210", "9123456789", "9555555555"],
+  "title": "Diwali Sale 🎉",
+  "body": "Up to 50% OFF on all products!",
+  "image_url": "https://chicx.in/images/sale-poster.jpg",
+  "sale_url": "https://chicx.in/sale"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| phones | array | Yes | List of phone numbers (max 1000) |
+| title | string | Yes | Sale title |
+| body | string | Yes | Sale details |
+| image_url | string | Yes | Sale poster image URL (must be HTTPS) |
+| sale_url | string | No | Sale page link |
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "message": "Sale announcement broadcast completed",
+  "sent_count": 3,
+  "failed_count": 0,
+  "total": 3
+}
+```
+
+**API Field → Template Variable Mapping:**
+
+| Template Part | Variable | API Field | Fallback | Required |
+|---------------|----------|-----------|----------|----------|
+| Header (Image) | Image | `image_url` | — | ✅ Yes (must be HTTPS) |
+| Body | `{{1}}` | `title` | — | ✅ Yes |
+| Body | `{{2}}` | `body` | — | ✅ Yes |
+| Button (URL) | Dynamic suffix | `sale_url` | Button not sent | No |
+
+> [!IMPORTANT]
+> `phones`, `title`, `body`, and `image_url` are all **required**. `image_url` must be a publicly accessible HTTPS URL. Maximum 1000 phones per request.
+
+### 2.6 Order Confirmation Call (COD)
 
 **When to call:** COD order placed, needs verbal confirmation
 
@@ -396,6 +503,9 @@ POST /webhooks/chicx/confirm-order
   "phone": "9876543210"
 }
 ```
+
+**What happens after the call:**
+The bot will analyze the customer's response and POST the result to your backend at `/api/confirm_order.php` (see Section 3.5).
 
 ---
 
@@ -544,15 +654,65 @@ GET /api/get_order.php?phone=9876543210&limit=5
 }
 ```
 
+### 3.5 Confirm Order Callback (Bot → CHICX)
+
+> [!IMPORTANT]
+> Your backend **must implement** this endpoint. The bot calls it after a confirmation voice call completes.
+
+```
+POST /api/confirm_order.php
+Authorization: Bearer {CHICX_API_KEY}
+```
+
+**Payload the bot sends:**
+```json
+{
+  "order_id": "ORD123456",
+  "confirmed": true,
+  "confirmation_method": "voice_call",
+  "notes": "Customer confirmed order via voice call"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| order_id | string | The order ID you sent in the confirm-order request |
+| confirmed | boolean | `true` = confirmed, `false` = rejected or no answer |
+| confirmation_method | string | Always `"voice_call"` |
+| notes | string | Details: "Customer confirmed...", "Call not answered: missed", "Customer rejected/cancelled...", "Customer response unclear" |
+
+**Your backend should:**
+1. Look up the order by `order_id`
+2. If `confirmed == true` → proceed with order processing
+3. If `confirmed == false` → hold or cancel the order based on `notes`
+4. Return `{"status": true}` on success
+
 ---
 
 ## Section 4: WhatsApp Templates
 
-These message templates must be created and approved in Meta Business Manager before the bot can send notifications.
+These message templates must be created and approved in **Meta Business Manager** before the bot can send notifications.
+
+### Template: otp_login
+
+**Category:** Authentication  
+**Language:** English
+
+**Content:**
+```
+Your CHICX login OTP is: {{1}}
+
+Do not share this code with anyone.
+```
+
+**Variables:**
+- {{1}} = OTP code (6 digits)
+
+---
 
 ### Template: cart_reminder
 
-**Category:** Marketing
+**Category:** Marketing  
 **Language:** English
 
 **Content:**
@@ -597,7 +757,7 @@ Track your order for live updates.
 
 ### Template: new_product
 
-**Category:** Marketing
+**Category:** Marketing  
 **Language:** English
 
 **Content:**
@@ -613,7 +773,31 @@ Shop now before it's gone.
 - {{1}} = Product name
 - {{2}} = Price
 
+**Header:** Image (product image URL passed via API)  
 **Button:** "Shop Now" → {{product_url}}
+
+---
+
+### Template: sale_announcement
+
+**Category:** Marketing  
+**Language:** English
+
+**Content:**
+```
+*{{1}}*
+
+{{2}}
+
+Shop the sale now!
+```
+
+**Variables:**
+- {{1}} = Sale title
+- {{2}} = Sale description
+
+**Header:** Image (sale poster URL passed via API)  
+**Button:** "Shop Now" → {{sale_url}}
 
 ---
 
@@ -622,15 +806,27 @@ Shop now before it's gone.
 ### Bot Server Needs (from CHICX Backend)
 
 ```env
+# Required for product/order API calls
 CHICX_API_BASE_URL=https://api.chicx.in
 CHICX_API_KEY=your_backend_api_key
+
+# Required for LLM (chat intelligence)
+OPENROUTER_API_KEY=sk-or-v1-xxx
+
+# Required for voice calls
+BOLNA_API_KEY=xxx
+BOLNA_WEBHOOK_SECRET=xxx
+BOLNA_CONFIRMATION_AGENT_ID=xxx
 ```
 
-### Dashboard Needs (from Bot Server)
+### Dashboard / Backend Needs (from Bot Server)
 
 ```env
+# For calling stats APIs
 BOT_API_BASE_URL=https://bot.chicx.in
 ADMIN_API_KEY=admin_api_key_for_stats
+
+# For calling notification webhooks
 CHICX_WEBHOOK_SECRET=webhook_secret_for_notifications
 ```
 

@@ -51,8 +51,8 @@ class NewProductPayload(BaseModel):
     """Payload for new product announcement with poster image."""
 
     phones: list[str]  # List of phone numbers to notify
-    product_name: str
-    product_price: float
+    title: str  # e.g., "New Arrival!"
+    body: str  # e.g., "Designer Gold Earrings - ₹1299"
     image_url: str  # Required: Poster/product image URL (must be publicly accessible HTTPS)
     product_url: str | None = None  # Optional: Dynamic URL suffix for template button
 
@@ -79,11 +79,10 @@ class SaleAnnouncementPayload(BaseModel):
     """Payload for sale/promotion announcement with poster image."""
 
     phones: list[str]  # List of phone numbers to notify
-    sale_title: str  # e.g., "Diwali Sale", "End of Season Sale"
-    discount_text: str  # e.g., "Up to 50% OFF", "Flat 30% OFF"
+    title: str  # e.g., "Diwali Sale"
+    body: str  # e.g., "Up to 50% OFF on all products!"
     image_url: str  # Required: Sale poster image URL (must be publicly accessible HTTPS)
     sale_url: str | None = None  # Optional: Dynamic URL suffix for template button
-    valid_till: str | None = None  # Optional: e.g., "31st December"
 
     @field_validator("image_url")
     @classmethod
@@ -313,10 +312,10 @@ async def handle_new_product(
 
     Template: new_product (with image header)
     Header: Image (poster/product image)
-    Body: {{1}} product_name, {{2}} product_price
+    Body: {{1}} title, {{2}} body
     Button: Shop Now -> product_url
     """
-    logger.info(f"New product webhook for {len(payload.phones)} phones: {payload.product_name}")
+    logger.info(f"New product webhook for {len(payload.phones)} phones: {payload.title}")
 
     # Use MARKETING channel for new product announcements
     wa_service = WhatsAppService(db=db, redis_client=redis_client, channel=WhatsAppChannel.MARKETING)
@@ -344,8 +343,8 @@ async def handle_new_product(
                 {
                     "type": "body",
                     "parameters": [
-                        {"type": "text", "text": payload.product_name},
-                        {"type": "text", "text": f"₹{payload.product_price:.0f}"},
+                        {"type": "text", "text": payload.title},
+                        {"type": "text", "text": payload.body},
                     ],
                 },
             ]
@@ -401,10 +400,10 @@ async def handle_sale_announcement(
 
     Template: sale_announcement (with image header)
     Header: Image (sale poster)
-    Body: {{1}} sale_title, {{2}} discount_text, {{3}} valid_till (optional)
+    Body: {{1}} title, {{2}} body
     Button: Shop Now -> sale_url
     """
-    logger.info(f"Sale announcement webhook for {len(payload.phones)} phones: {payload.sale_title}")
+    logger.info(f"Sale announcement webhook for {len(payload.phones)} phones: {payload.title}")
 
     # Use MARKETING channel for sale announcements
     wa_service = WhatsAppService(db=db, redis_client=redis_client, channel=WhatsAppChannel.MARKETING)
@@ -432,9 +431,8 @@ async def handle_sale_announcement(
                 {
                     "type": "body",
                     "parameters": [
-                        {"type": "text", "text": payload.sale_title},
-                        {"type": "text", "text": payload.discount_text},
-                        {"type": "text", "text": payload.valid_till or "limited time"},
+                        {"type": "text", "text": payload.title},
+                        {"type": "text", "text": payload.body},
                     ],
                 },
             ]
@@ -615,6 +613,15 @@ async def handle_confirm_order(
             "order_id": payload.order_id,
         }
     
+    # Check if confirmation agent ID is configured
+    if not settings.bolna_confirmation_agent_id:
+        logger.error("BOLNA_CONFIRMATION_AGENT_ID not configured")
+        return {
+            "status": "error",
+            "message": "Confirmation agent not configured",
+            "order_id": payload.order_id,
+        }
+    
     phone = normalize_phone(payload.phone)
     
     # Build items summary for voice
@@ -644,22 +651,29 @@ async def handle_confirm_order(
     try:
         bolna = get_bolna_client()
         
-        # Get agent ID from settings (you'll need to add this)
-        agent_id = getattr(settings, 'bolna_confirmation_agent_id', '') or settings.bolna_api_key[:20]
-        
         result = await bolna.make_outbound_call(
             phone=phone,
-            agent_id=agent_id,
+            agent_id=settings.bolna_confirmation_agent_id,
             context=context,
         )
         
-        logger.info(f"Outbound call initiated for order {payload.order_id}: {result.get('call_id')}")
+        call_id = result.get("call_id")
+        logger.info(f"Outbound call initiated for order {payload.order_id}: {call_id}")
+        
+        # Store call_id -> order_id mapping in Redis for O(1) lookup
+        # when call-complete webhook arrives
+        if call_id:
+            await redis_client.setex(
+                f"confirmation_call:{call_id}",
+                3600,  # 1 hour TTL (same as pending_confirmation)
+                payload.order_id,
+            )
         
         return {
             "status": "ok",
             "message": f"Confirmation call initiated for order {payload.order_id}",
             "order_id": payload.order_id,
-            "call_id": result.get("call_id"),
+            "call_id": call_id,
             "phone": payload.phone,
         }
         
