@@ -42,11 +42,6 @@ class Call(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
     phone: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    # DEPRECATED: exotel_call_id kept for database compatibility, no longer used
-    # All calls now use bolna_call_id as the primary external identifier
-    exotel_call_id: Mapped[str | None] = mapped_column(
-        String(100), unique=True, nullable=True, index=True
-    )
     bolna_call_id: Mapped[str | None] = mapped_column(
         String(100), unique=True, nullable=True, index=True
     )

@@ -40,11 +40,11 @@ def normalize_phone(phone: str | None) -> str:
     if len(phone) == 10 and phone.isdigit():
         # 10 digits without country code
         phone = f"+91{phone}"
-    elif len(phone) == 11 and phone.startswith("91"):
-        # 11 digits starting with 91 (missing +)
+    elif len(phone) == 12 and phone.startswith("91") and not phone.startswith("+"):
+        # 12 digits starting with 91 (missing +)
         phone = f"+{phone}"
-    elif len(phone) == 12 and phone.startswith("+91"):
-        # Already correct format
+    elif len(phone) == 13 and phone.startswith("+91"):
+        # Already correct format (+91 + 10 digits)
         pass
     elif len(phone) == 13 and phone.startswith("+910"):
         # Has extra 0 after country code (common mistake)

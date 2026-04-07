@@ -15,8 +15,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+import redis.asyncio as aioredis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +28,7 @@ from app.models.voice import Call, CallTranscript, CallStatus, CallDirection
 from app.models.conversation import Conversation, ChannelType, ConversationStatus
 from app.models.user import User
 from app.services.chicx_api import get_chicx_client, ChicxAPIError
+from app.utils.phone import normalize_phone
 from app.services.embedding import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -176,6 +178,8 @@ async def handle_tool_call(
     try:
         if payload.tool_name == "search_products":
             result = await execute_search_products(payload.arguments)
+        elif payload.tool_name == "get_product_details":
+            result = await execute_get_product_details(payload.arguments)
         elif payload.tool_name == "get_order_status":
             result = await execute_get_order_status(payload.arguments, payload.user_phone)
         elif payload.tool_name == "get_order_history":
@@ -217,6 +221,7 @@ async def handle_tool_call(
 @router.post("/call-complete")
 async def handle_call_complete(
     payload: CallCompletePayload,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _auth: BolnaAuth = None,
 ) -> dict[str, str]:
@@ -343,6 +348,7 @@ async def handle_call_complete(
     # If this was an outbound confirmation call, extract result and notify CHICX
     
     confirmation_result = await process_confirmation_call(
+        redis_client=request.app.state.redis,
         call_id=payload.call_id,
         transcript=payload.transcript,
         status=payload.status,
@@ -395,6 +401,45 @@ async def execute_search_products(args: dict[str, Any]) -> dict[str, Any]:
         return {"message": "Sorry, I couldn't search products right now. Please try again."}
 
 
+async def execute_get_product_details(args: dict[str, Any]) -> dict[str, Any]:
+    """Execute product detail lookup via CHICX API."""
+    client = get_chicx_client()
+    product_id = args.get("product_id", "")
+
+    if not product_id:
+        return {"message": "Please tell me which product you'd like to know more about."}
+
+    try:
+        product = await client.get_product(product_id)
+
+        if not product:
+            return {"message": f"I couldn't find product {product_id}. It may no longer be available."}
+
+        # Format for voice output
+        name = product.get("title", product.get("name", "Product"))
+        price = product.get("price", "")
+        description = product.get("short_description", product.get("description", ""))
+
+        voice_response = f"{name}"
+        if price:
+            voice_response += f" is priced at {price} rupees"
+        if description:
+            # Truncate description for voice
+            short_desc = description[:200] if len(description) > 200 else description
+            voice_response += f". {short_desc}"
+
+        return {
+            "name": name,
+            "price": price,
+            "description": description,
+            "message": voice_response,
+        }
+
+    except ChicxAPIError as e:
+        logger.error(f"Product details error: {e}")
+        return {"message": "Sorry, I couldn't get product details right now. Please try again."}
+
+
 async def execute_get_order_status(args: dict[str, Any], user_phone: str | None) -> dict[str, Any]:
     """Execute order status lookup via CHICX API.
     
@@ -405,7 +450,6 @@ async def execute_get_order_status(args: dict[str, Any], user_phone: str | None)
     Returns:
         Order status information if authorized, error message otherwise
     """
-    from app.utils.phone import normalize_phone
     
     client = get_chicx_client()
     order_id = args.get("order_id", "")
@@ -595,25 +639,27 @@ async def find_call(
     return result.scalar_one_or_none()
 
 
-def normalize_phone(phone: str) -> str:
-    """Normalize phone number by removing + prefix and spaces."""
-    if not phone:
-        return ""
-    return phone.lstrip("+").replace(" ", "").replace("-", "").strip()
+# normalize_phone is imported from app.utils.phone (module-level import)
 
 
 async def get_or_create_user(db: AsyncSession, phone: str) -> User:
-    """Get existing user or create new one."""
+    """Get existing user or create new one.
+    
+    Phone is stored without '+' prefix to match existing DB format.
+    """
+    # Strip + for DB compatibility (existing records stored without +)
+    db_phone = phone.lstrip("+") if phone else phone
+    
     result = await db.execute(
-        select(User).where(User.phone == phone)
+        select(User).where(User.phone == db_phone)
     )
     user = result.scalar_one_or_none()
 
     if not user:
-        user = User(phone=phone)
+        user = User(phone=db_phone)
         db.add(user)
         await db.flush()
-        logger.info(f"Created new user for phone: {phone}")
+        logger.info(f"Created new user for phone: {db_phone}")
 
     return user
 
@@ -624,16 +670,19 @@ async def get_or_create_user(db: AsyncSession, phone: str) -> User:
 
 
 async def process_confirmation_call(
+    redis_client: aioredis.Redis,
     call_id: str,
     transcript: str | None,
     status: str,
 ) -> dict[str, Any] | None:
     """Process confirmation call result and notify CHICX backend.
     
-    Checks if this was an outbound confirmation call by looking up in Redis.
+    Checks if this was an outbound confirmation call by looking up the
+    call_id -> order_id mapping in Redis (set when initiating the call).
     If found, extracts confirmation result from transcript and sends callback.
     
     Args:
+        redis_client: Existing Redis client from app state
         call_id: Bolna call ID
         transcript: Call transcript
         status: Call completion status
@@ -641,107 +690,76 @@ async def process_confirmation_call(
     Returns:
         Dict with confirmation result, or None if not a confirmation call
     """
-    import redis.asyncio as aioredis
-    from app.services.chicx_api import get_chicx_client
-    
-    # Get Redis client
-    try:
-        redis_client = aioredis.from_url(
-            settings.redis_url,
-            encoding="utf-8",
-            decode_responses=True,
-        )
-    except Exception as e:
-        logger.error(f"Failed to connect to Redis: {e}")
-        return None
+    import json
     
     try:
-        # Look for pending confirmations matching this call
-        # We stored the order_id when initiating the call
-        # Check by scanning for pending_confirmation keys
+        # Direct O(1) lookup: call_id -> order_id mapping
+        # This key is set in chicx.py when initiating the outbound call
+        order_id = await redis_client.get(f"confirmation_call:{call_id}")
         
-        # For now, we'll extract order_id from transcript context if available
-        # In production, you'd store call_id -> order_id mapping when making the call
-        
-        # Search for any pending confirmations
-        keys = await redis_client.keys("pending_confirmation:*")
-        
-        if not keys:
+        if not order_id:
+            # Not a confirmation call
             return None
         
-        # Check each pending confirmation (in production, use a proper mapping)
-        for key in keys:
-            order_data = await redis_client.get(key)
-            if not order_data:
-                continue
-            
-            import json
-            try:
-                order_info = json.loads(order_data)
-            except json.JSONDecodeError:
-                continue
-            
-            order_id = order_info.get("order_id", "")
-            
-            # Determine if order was confirmed from transcript
-            confirmed = False
-            confirmation_notes = ""
-            
-            if status in ("missed", "no-answer", "busy", "failed"):
-                # Call didn't connect
-                confirmed = False
-                confirmation_notes = f"Call not answered: {status}"
-            elif transcript:
-                # Analyze transcript for confirmation
-                transcript_lower = transcript.lower()
-                
-                # Look for positive confirmations
-                positive_keywords = ["yes", "confirm", "haan", "theek", "ok", "okay", "proceed", "correct", "sure"]
-                negative_keywords = ["no", "cancel", "nahi", "wrong", "incorrect", "stop", "reject"]
-                
-                # Count keyword matches
-                positive_count = sum(1 for kw in positive_keywords if kw in transcript_lower)
-                negative_count = sum(1 for kw in negative_keywords if kw in transcript_lower)
-                
-                if positive_count > negative_count:
-                    confirmed = True
-                    confirmation_notes = "Customer confirmed order via voice call"
-                elif negative_count > 0:
-                    confirmed = False
-                    confirmation_notes = "Customer rejected/cancelled order via voice call"
-                else:
-                    # Unclear - default to not confirmed
-                    confirmed = False
-                    confirmation_notes = "Customer response unclear"
-            else:
-                confirmation_notes = "No transcript available"
-            
-            # Send confirmation to CHICX backend
-            try:
-                chicx_client = get_chicx_client()
-                await chicx_client.confirm_order(
-                    order_id=order_id,
-                    confirmed=confirmed,
-                    confirmation_notes=confirmation_notes,
-                )
-                logger.info(f"Sent confirmation to CHICX: order={order_id}, confirmed={confirmed}")
-            except Exception as e:
-                logger.error(f"Failed to send confirmation to CHICX: {e}")
-            
-            # Delete the pending confirmation
-            await redis_client.delete(key)
-            
-            return {
-                "order_id": order_id,
-                "confirmed": confirmed,
-                "notes": confirmation_notes,
-            }
+        # Also get the full order data if it exists
+        order_data = await redis_client.get(f"pending_confirmation:{order_id}")
         
-        return None
+        # Determine if order was confirmed from transcript
+        confirmed = False
+        confirmation_notes = ""
+        
+        if status in ("missed", "no-answer", "busy", "failed"):
+            # Call didn't connect
+            confirmed = False
+            confirmation_notes = f"Call not answered: {status}"
+        elif transcript:
+            # Analyze transcript for confirmation
+            transcript_lower = transcript.lower()
+            
+            # Look for positive confirmations
+            positive_keywords = ["yes", "confirm", "haan", "theek", "ok", "okay", "proceed", "correct", "sure"]
+            negative_keywords = ["no", "cancel", "nahi", "wrong", "incorrect", "stop", "reject"]
+            
+            # Count keyword matches
+            positive_count = sum(1 for kw in positive_keywords if kw in transcript_lower)
+            negative_count = sum(1 for kw in negative_keywords if kw in transcript_lower)
+            
+            if positive_count > negative_count:
+                confirmed = True
+                confirmation_notes = "Customer confirmed order via voice call"
+            elif negative_count > 0:
+                confirmed = False
+                confirmation_notes = "Customer rejected/cancelled order via voice call"
+            else:
+                # Unclear - default to not confirmed
+                confirmed = False
+                confirmation_notes = "Customer response unclear"
+        else:
+            confirmation_notes = "No transcript available"
+        
+        # Send confirmation to CHICX backend
+        try:
+            chicx_client = get_chicx_client()
+            await chicx_client.confirm_order(
+                order_id=order_id,
+                confirmed=confirmed,
+                confirmation_notes=confirmation_notes,
+            )
+            logger.info(f"Sent confirmation to CHICX: order={order_id}, confirmed={confirmed}")
+        except Exception as e:
+            logger.error(f"Failed to send confirmation to CHICX: {e}")
+        
+        # Clean up both Redis keys
+        await redis_client.delete(f"confirmation_call:{call_id}")
+        await redis_client.delete(f"pending_confirmation:{order_id}")
+        
+        return {
+            "order_id": order_id,
+            "confirmed": confirmed,
+            "notes": confirmation_notes,
+        }
         
     except Exception as e:
         logger.error(f"Error processing confirmation call: {e}")
         return None
-    finally:
-        await redis_client.close()
 

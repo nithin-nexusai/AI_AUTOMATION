@@ -15,6 +15,8 @@ import logging
 from app.config import get_settings
 from app.core.llm import shutdown_llm_client
 from app.services.embedding import shutdown_embedding_client
+from app.services.chicx_api import shutdown_chicx_client
+from app.services.bolna import shutdown_bolna_client
 from app.api.admin import health, stats, recordings
 from app.api.webhooks import whatsapp, bolna, chicx
 
@@ -72,6 +74,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Shutdown: Close connections
     await shutdown_llm_client()
     await shutdown_embedding_client()
+    await shutdown_chicx_client()
+    await shutdown_bolna_client()
     await app.state.redis.close()
 
 

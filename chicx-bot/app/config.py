@@ -27,28 +27,28 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # WhatsApp (Meta Cloud API)
+    # WhatsApp (Meta Cloud API) - Primary (Chatbot/Transactional)
+    # Used for: Customer conversations, OTP, order updates
     whatsapp_phone_number_id: str = ""
     whatsapp_business_account_id: str = ""
     whatsapp_access_token: str = ""
     whatsapp_verify_token: str = ""
     whatsapp_app_secret: str = ""
 
-    # DeepSeek LLM
-    deepseek_api_key: str = ""
-    deepseek_model: str = "deepseek-chat"
-    deepseek_base_url: str = "https://api.deepseek.com"
+    # WhatsApp (Meta Cloud API) - Marketing
+    # Used for: New products, sales, abandoned cart reminders
+    # If not set, falls back to primary number
+    whatsapp_marketing_phone_number_id: str = ""
+    whatsapp_marketing_access_token: str = ""
+    whatsapp_marketing_app_secret: str = ""
 
-    # OpenRouter (LLM)
+    # OpenRouter (LLM for chat)
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemini-2.0-flash-001"  # LLM model for chat
+    openrouter_model: str = "google/gemini-2.0-flash-001"
 
-    # Google Gemini (Embeddings only)
+    # Google Gemini (Embeddings for FAQ search)
     gemini_api_key: str = ""
-    embedding_model: str = "text-embedding-004"  # Embedding model
-
-    # OpenAI (optional, for fallback)
-    openai_api_key: str = ""
+    embedding_model: str = "text-embedding-004"
 
     # Bolna (Voice Agent) - Managed Platform
     # Bolna handles all voice AI, telephony, and call recording
