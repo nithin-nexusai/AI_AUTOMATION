@@ -1,0 +1,101 @@
+name: Run Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - develop
+
+jobs:
+  test:
+    name: Test on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.11']
+    
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: chicx_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd chicx-bot
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run linting
+        run: |
+          cd chicx-bot
+          pip install flake8 black isort
+          flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          black --check app/
+          isort --check-only app/
+
+      - name: Run tests with coverage
+        env:
+          # Test database (uses GitHub Actions service)
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/chicx_test
+          REDIS_URL: redis://localhost:6379/0
+          
+          # Dummy values for testing - tests use mocked API calls, not real ones
+          # Your real secrets go in GitHub Secrets (for deployment) and EC2 .env file (for production)
+          WHATSAPP_PHONE_NUMBER_ID: test
+          WHATSAPP_ACCESS_TOKEN: test
+          WHATSAPP_VERIFY_TOKEN: test
+          WHATSAPP_APP_SECRET: test
+          OPENROUTER_API_KEY: test
+        run: |
+          cd chicx-bot
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./chicx-bot/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: Test report
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: Test Results
+          path: chicx-bot/test-results.xml
+          reporter: java-junit

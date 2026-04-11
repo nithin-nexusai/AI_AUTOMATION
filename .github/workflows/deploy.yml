@@ -1,0 +1,113 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+  EC2_USER: ec2-user
+  DEPLOY_PATH: /opt/chicx-bot
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd chicx-bot
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run tests
+        run: |
+          cd chicx-bot
+          pytest tests/ -v --tb=short
+
+  deploy:
+    name: Deploy to Production
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Create deployment package
+        run: |
+          tar -czf deploy.tar.gz \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.pytest_cache' \
+            --exclude='tests' \
+            chicx-bot/
+
+      - name: Upload to EC2
+        run: |
+          scp -i ~/.ssh/id_rsa deploy.tar.gz ${{ env.EC2_USER }}@${{ env.EC2_HOST }}:/tmp/
+
+      - name: Deploy on EC2
+        run: |
+          ssh -i ~/.ssh/id_rsa ${{ env.EC2_USER }}@${{ env.EC2_HOST }} << 'EOF'
+            set -e
+            
+            # Backup current deployment
+            if [ -d "${{ env.DEPLOY_PATH }}" ]; then
+              sudo cp -r ${{ env.DEPLOY_PATH }} ${{ env.DEPLOY_PATH }}.backup.$(date +%Y%m%d_%H%M%S)
+            fi
+            
+            # Extract new code
+            cd ${{ env.DEPLOY_PATH }}
+            tar -xzf /tmp/deploy.tar.gz --strip-components=1
+            rm /tmp/deploy.tar.gz
+            
+            # Run deployment script
+            bash scripts/deploy.sh
+          EOF
+
+      - name: Health check
+        run: |
+          sleep 30
+          response=$(curl -f https://bot.thechicx.com/admin/health || echo "failed")
+          if [[ $response == "failed" ]]; then
+            echo "Health check failed!"
+            exit 1
+          fi
+          echo "Deployment successful!"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"🚨 Deployment failed for CHICX Bot!"}'
+
