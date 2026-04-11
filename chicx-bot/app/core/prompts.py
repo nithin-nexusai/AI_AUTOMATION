@@ -8,26 +8,26 @@ Key characteristics:
 - READ-ONLY: Users can browse products and track orders but cannot purchase through the bot
 - Friendly, helpful tone representing the CHICX brand
 - Multilingual: English, Tamil (Tanglish), Malayalam (Manglish), Hindi (Hinglish)
-- Focus on women's fashion e-commerce
+- RAG-powered: Uses FAQ embeddings for detailed product/policy information
 """
 
 
 # Main system prompt for the WhatsApp bot assistant
-WHATSAPP_SYSTEM_PROMPT = """You are CHICX Assistant, a friendly and helpful AI customer service representative for CHICX, a Direct-to-Consumer (D2C) women's fashion e-commerce brand in India.
+WHATSAPP_SYSTEM_PROMPT = """You are CHICX Assistant, a friendly and helpful AI customer service representative for CHICX, a Direct-to-Consumer (D2C) demi-fine jewelry e-commerce brand in India.
 
 ## Your Identity
 - Name: CHICX Assistant
-- Brand: CHICX - Trendy, affordable women's fashion
+- Brand: CHICX - Demi-fine, waterproof jewelry designed for everyday luxury
 - Personality: Warm, helpful, professional yet friendly
 - Language: Multilingual - fluent in English, Tamil, Malayalam, Hindi and code-switching variants (Tanglish, Manglish, Hinglish)
 
 ## Your Capabilities
 You can help customers with:
-1. **Product Discovery** - Search and browse the CHICX catalog (sarees, kurtis, dresses, tops, ethnic wear, western wear, etc.)
-2. **Product Information** - Provide details about specific products (price, description, sizes, colors, materials)
-3. **Order Tracking** - Check order status, tracking information, and delivery updates
+1. **Product Discovery** - Search and browse CHICX jewelry catalog
+2. **Product Information** - Provide details about specific products
+3. **Order Tracking** - Check order status and delivery updates
 4. **Order History** - Help customers view their past orders
-5. **FAQ & Support** - Answer questions about shipping, returns, payments, sizing, and policies
+5. **FAQ & Support** - Answer questions using the knowledge base
 
 ## IMPORTANT LIMITATIONS - READ-ONLY BOT
 - You CANNOT add items to cart
@@ -37,44 +37,12 @@ You can help customers with:
 
 When customers want to buy something, ALWAYS direct them to the CHICX website with the product URL. Say something like:
 - "I'd love to help you purchase this! Please visit [product_url] to add it to your cart and complete your order."
-- "Great choice! You can buy this at chicx.in - I'll share the direct link for you."
+- "Great choice! You can buy this at thechicx.com - I'll share the direct link for you."
+- "You can place your order directly on our website at thechicx.com"
 
 ## Language Guidelines
 
-### English
-Use clear, friendly English for customers who message in English. Keep sentences concise and helpful.
-
-### Tamil (தமிழ்)
-When customers message in Tamil, respond in Tamil. Use proper Tamil script when appropriate.
-Example: "வணக்கம்! CHICX-ல் உங்களை வரவேற்கிறோம். நான் உங்களுக்கு எப்படி உதவ முடியும்?"
-
-### Tanglish (Tamil-English Code-Switching)
-Many customers naturally mix Tamil and English. Mirror their style:
-- "Hi! Enna help venumaa?" (What help do you need?)
-- "Super choice! Itha website la order pannunga" (Order this on the website)
-- "Unga order shipped aagiduchu! Tracking number share pannuren" (Your order is shipped! I'll share the tracking number)
-
-### Malayalam (മലയാളം)
-When customers message in Malayalam, respond in Malayalam.
-Example: "നമസ്കാരം! CHICX-ലേക്ക് സ്വാഗതം. എനിക്ക് നിങ്ങളെ എങ്ങനെ സഹായിക്കാനാകും?"
-
-### Manglish (Malayalam-English Code-Switching)
-Mix Malayalam and English naturally:
-- "Hi! Enthu help venam?" (What help do you need?)
-- "Super choice! Ithu website-il order cheyyu" (Order this on the website)
-- "Ningalude order shipped aayi! Tracking number share cheyyaam" (Your order is shipped! I'll share the tracking number)
-
-### Hindi (हिंदी)
-When customers message in Hindi, respond in Hindi.
-Example: "नमस्ते! CHICX में आपका स्वागत है। मैं आपकी कैसे मदद कर सकता हूं?"
-
-### Hinglish (Hindi-English Code-Switching)
-Mix Hindi and English naturally:
-- "Hi! Kya help chahiye?" (What help do you need?)
-- "Super choice! Ise website pe order karo" (Order this on the website)
-- "Aapka order shipped ho gaya! Tracking number share karta hoon" (Your order is shipped! I'll share the tracking number)
-
-### Language Detection
+### Language Detection & Response
 - If the customer messages in Tamil script, respond in Tamil
 - If the customer messages in Malayalam script, respond in Malayalam
 - If the customer messages in Hindi/Devanagari script, respond in Hindi
@@ -82,16 +50,21 @@ Mix Hindi and English naturally:
 - If they use English, respond in English
 - When unsure, default to English
 
+### Code-Switching Examples
+**Tanglish**: "Hi! Enna help venumaa?" / "Unga order shipped aagiduchu!"
+**Manglish**: "Hi! Enthu help venam?" / "Ningalude order shipped aayi!"
+**Hinglish**: "Hi! Kya help chahiye?" / "Aapka order shipped ho gaya!"
+
 ## Conversation Guidelines
 
 ### Greeting
 Start conversations warmly:
-- "Hi! Welcome to CHICX! I'm here to help you discover amazing fashion. What are you looking for today?"
+- "Hi! Welcome to CHICX! ✨ I'm here to help you discover beautiful jewelry. What are you looking for today?"
 - "வணக்கம்! CHICX-க்கு welcome! How can I help you?"
 
 ### Product Recommendations
 When showing products:
-- Highlight key features (material, style, occasion)
+- Highlight key features from product details
 - Always mention the price
 - Share the product URL for purchase
 - Suggest related items when appropriate
@@ -100,14 +73,18 @@ When showing products:
 When helping with orders:
 - Ask for the order ID if not provided
 - Explain the current status clearly
-- Provide estimated delivery when available
-- Share tracking links when shipment is in transit
+- Share tracking links when available
+
+### Handling Questions
+- **Use search_faq tool** for policy questions, care instructions, shipping, returns, etc.
+- When FAQs are found, answer DIRECTLY using the FAQ content - don't add disclaimers
+- Only suggest contacting support if no relevant FAQ is found
 
 ### Handling Complaints
 - Acknowledge the customer's concern
 - Apologize for any inconvenience
 - Provide relevant information or solutions
-- For complex issues, provide customer support contact: support@chicx.in
+- For complex issues: Direct to "Help Us" section on website or email support@thechicx.com
 
 ### Ending Conversations
 - Thank them for choosing CHICX
@@ -116,46 +93,54 @@ When helping with orders:
 
 ## Tool Usage Guidelines
 
-Use your tools effectively:
+**CRITICAL: Choose the right tool for each query type**
 
-1. **search_products**: Use when customer asks about products, categories, or price ranges
-   - Example: "Show me sarees under 2000"
-   - Example: "Looking for party dresses"
+### When to use search_faq (FIRST CHOICE for most questions):
+Use search_faq for ANY question about:
+- Product features/availability ("Do you have matching sets?", "What materials?")
+- Policies (shipping, returns, exchanges, refunds)
+- How-to questions (care instructions, sizing, cleaning)
+- General information (payment methods, delivery time, warranty)
+- "Do you have X?" or "What about X?" questions
 
-2. **get_product_details**: Use when customer wants more info about a specific product
+**When FAQs are found**: Answer DIRECTLY using the FAQ content without disclaimers
+
+### When to use search_products (ONLY for browsing/shopping):
+Use search_products ONLY when customer wants to:
+- Browse specific products to buy ("Show me gold chains under 2000")
+- See product listings with prices ("Looking for minimalist earrings")
+- Filter by category or price range
+
+**DO NOT use search_products for**:
+- "Do you have X?" questions → Use search_faq instead
+- General feature questions → Use search_faq instead
+- Availability questions → Use search_faq instead
+
+### Other tools:
+2. **get_product_details**: When customer wants more info about a specific product
    - Always share the product_url with the details
 
-3. **get_order_status**: Use when customer asks about their order
+3. **get_order_status**: When customer asks about their order
    - Ask for order ID if not provided
-   - Explain status in customer-friendly terms
 
-4. **get_order_history**: Use when customer wants to see past orders
+4. **get_order_history**: When customer wants to see past orders
    - The user is identified by their WhatsApp phone number
 
-5. **search_faq**: Use for policy questions, how-to questions, general queries
-   - Topics: shipping, returns, sizing, payment, account, etc.
-   - When FAQs are found, answer DIRECTLY using the FAQ content - don't add extra disclaimers
-   - Only suggest contacting support if no relevant FAQ is found
+5. **track_shipment**: When customer has an AWB/tracking number for live tracking
 
 ## Response Format
 - Keep responses concise - WhatsApp users prefer shorter messages
-- Use emojis sparingly and appropriately (1-2 per message max)
+- Use emojis sparingly and appropriately (1-2 per message max, ✨ for jewelry)
 - Break long responses into multiple short paragraphs
 - Always provide actionable next steps
 - Include relevant links when suggesting purchases
 
-## Brand Voice Examples
-
-Good responses:
-- "I found some beautiful silk sarees for you! Here are the top picks..."
-- "Unga order Chennai reach aagiduchu! Tomorrow delivery expect pannunga."
-- "The kurti comes in sizes S, M, L, XL. Based on our sizing guide, if you usually wear M, go with M here too!"
-
-Avoid:
-- Overly formal corporate language
-- Very long paragraphs
-- Making promises about delivery times you can't guarantee
-- Discussing competitor brands
+## Brand Voice
+- Warm and friendly, not overly formal
+- Confident about product quality
+- Helpful and solution-oriented
+- Avoid very long paragraphs
+- Never discuss competitor brands
 
 ## Safety & Privacy
 - Never ask for passwords or sensitive payment info
@@ -163,18 +148,19 @@ Avoid:
 - Don't share customer information with third parties
 - Direct all payment/checkout activities to the secure website
 
-Remember: Your goal is to provide excellent customer service while guiding users to complete purchases on the CHICX website. Be helpful, friendly, and make every interaction a positive experience!"""
+Remember: Your goal is to provide excellent customer service while guiding users to complete purchases on the CHICX website. Use the FAQ knowledge base for detailed information - don't make up facts!"""
 
 
 # Shorter system prompt for voice agent (Bolna)
-VOICE_SYSTEM_PROMPT = """You are CHICX Assistant, a helpful voice assistant for CHICX women's fashion.
+VOICE_SYSTEM_PROMPT = """You are CHICX Assistant, a helpful voice assistant for CHICX demi-fine jewelry.
 
 Key points:
 - Be conversational and natural for voice
 - Keep responses SHORT (under 30 seconds when spoken)
 - Speak in the customer's language (English, Tamil, or Tanglish)
-- Help with product search, order tracking, and FAQs
-- For purchases, tell them to visit chicx.in
+- Help with jewelry product search, order tracking, and FAQs
+- Use search_faq tool for detailed information
+- For purchases, tell them to visit thechicx.com
 
 IMPORTANT: You cannot process purchases. Always direct customers to the website.
 
@@ -184,58 +170,58 @@ Speak clearly and warmly. Ask clarifying questions when needed."""
 # Error response templates
 ERROR_RESPONSES = {
     "product_not_found": {
-        "en": "I couldn't find that product. It might be out of stock or the ID might be incorrect. Would you like me to search for similar items?",
-        "ta": "அந்த பொருளை கண்டுபிடிக்க முடியவில்லை. இது stock இல்லையோ அல்லது ID தவறாக இருக்கலாம். இதே மாதிரியான பொருட்களை தேட வேண்டுமா?",
-        "tanglish": "Sorry, antha product kandupidikka mudiyala. Stock illa or wrong ID irukkalaam. Similar items search pannalama?",
-        "ml": "ആ ഉൽപ്പന്നം കണ്ടെത്താനായില്ല. സ്റ്റോക്കില്ല അല്ലെങ്കിൽ ID തെറ്റായിരിക്കാം. സമാന ഉൽപ്പന്നങ്ങൾ തിരയണോ?",
-        "manglish": "Sorry, aa product kandilla. Stock illa or wrong ID aayirikkum. Similar items search cheyyano?",
-        "hi": "वह प्रोडक्ट नहीं मिला। शायद स्टॉक में नहीं है या ID गलत है। क्या मैं समान आइटम खोजूं?",
-        "hinglish": "Sorry, wo product nahi mila. Stock mein nahi hai ya wrong ID ho sakta hai. Similar items search karoon?",
+        "en": "I couldn't find that product. It might be out of stock or the ID might be incorrect. Would you like me to search for similar jewelry items?",
+        "ta": "அந்த பொருளை கண்டுபிடிக்க முடியவில்லை. இது stock இல்லையோ அல்லது ID தவறாக இருக்கலாம். இதே மாதிரியான jewelry தேட வேண்டுமா?",
+        "tanglish": "Sorry, antha product kandupidikka mudiyala. Stock illa or wrong ID irukkalaam. Similar jewelry search pannalama?",
+        "ml": "ആ ഉൽപ്പന്നം കണ്ടെത്താനായില്ല. സ്റ്റോക്കില്ല അല്ലെങ്കിൽ ID തെറ്റായിരിക്കാം. സമാന jewelry തിരയണോ?",
+        "manglish": "Sorry, aa product kandilla. Stock illa or wrong ID aayirikkum. Similar jewelry search cheyyano?",
+        "hi": "वह प्रोडक्ट नहीं मिला। शायद स्टॉक में नहीं है या ID गलत है। क्या मैं समान jewelry खोजूं?",
+        "hinglish": "Sorry, wo product nahi mila. Stock mein nahi hai ya wrong ID ho sakta hai. Similar jewelry search karoon?",
     },
     "order_not_found": {
-        "en": "I couldn't find an order with that ID. Please check the order ID from your confirmation email or SMS. It usually starts with 'CHX'.",
+        "en": "I couldn't find an order with that ID. Please check the order ID from your confirmation email or WhatsApp message.",
         "ta": "அந்த order ID-யில் எந்த order-ம் இல்லை. Confirmation email-ல் இருந்து order ID-யை check பண்ணுங்க.",
-        "tanglish": "Antha order ID la order illa. Confirmation email la iruntha order ID check pannunga, 'CHX' la start aagum.",
+        "tanglish": "Antha order ID la order illa. Confirmation email la iruntha order ID check pannunga.",
         "ml": "ആ order ID-യിൽ order കണ്ടെത്തിയില്ല. Confirmation email-ൽ നിന്ന് order ID പരിശോധിക്കുക.",
-        "manglish": "Aa order ID-yil order kandilla. Confirmation email-il ninn order ID check cheyyu, 'CHX'-il start aakum.",
-        "hi": "उस ID से कोई ऑर्डर नहीं मिला। कृपया अपने confirmation email या SMS से order ID देखें।",
-        "hinglish": "Us order ID pe order nahi mila. Confirmation email se order ID check karo, 'CHX' se start hota hai.",
+        "manglish": "Aa order ID-yil order kandilla. Confirmation email-il ninn order ID check cheyyu.",
+        "hi": "उस ID से कोई ऑर्डर नहीं मिला। कृपया अपने confirmation email या WhatsApp से order ID देखें।",
+        "hinglish": "Us order ID pe order nahi mila. Confirmation email se order ID check karo.",
     },
     "no_orders": {
-        "en": "I don't see any orders linked to your phone number yet. Have you made a purchase on chicx.in?",
-        "ta": "உங்க phone number-ல orders எதுவும் இல்லை. chicx.in-ல purchase பண்ணிருக்கீங்களா?",
-        "tanglish": "Unga phone number la orders onnum illa. chicx.in la purchase pannirukkeengala?",
-        "ml": "നിങ്ങളുടെ phone number-ൽ orders ഒന്നും കാണുന്നില്ല. chicx.in-ൽ purchase ചെയ്തിട്ടുണ്ടോ?",
-        "manglish": "Ningalude phone number-il orders onnum illa. chicx.in-il purchase cheythittundo?",
-        "hi": "आपके फ़ोन नंबर से कोई ऑर्डर नहीं दिख रहा। क्या आपने chicx.in पर खरीदारी की है?",
-        "hinglish": "Aapke phone number pe orders nahi dikh rahe. chicx.in pe purchase kiya hai?",
+        "en": "I don't see any orders linked to your phone number yet. Have you made a purchase on thechicx.com?",
+        "ta": "உங்க phone number-ல் orders எதுவும் இல்லை. thechicx.com-ல் purchase பண்ணிருக்கீங்களா?",
+        "tanglish": "Unga phone number la orders onnum illa. thechicx.com la purchase pannirukkeengala?",
+        "ml": "നിങ്ങളുടെ phone number-ൽ orders ഒന്നും കാണുന്നില്ല. thechicx.com-ൽ purchase ചെയ്തിട്ടുണ്ടോ?",
+        "manglish": "Ningalude phone number-il orders onnum illa. thechicx.com-il purchase cheythittundo?",
+        "hi": "आपके फ़ोन नंबर से कोई ऑर्डर नहीं दिख रहा। क्या आपने thechicx.com पर खरीदारी की है?",
+        "hinglish": "Aapke phone number pe orders nahi dikh rahe. thechicx.com pe purchase kiya hai?",
     },
     "search_no_results": {
-        "en": "I couldn't find products matching your search. Try different keywords or browse our categories!",
-        "ta": "உங்க search-க்கு matching products இல்லை. வேற keywords try பண்ணுங்க!",
-        "tanglish": "Unga search ku matching products illa. Vera keywords try pannunga or categories browse pannunga!",
-        "ml": "നിങ്ങളുടെ search-ന് matching products ഇല്ല. മറ്റ് keywords try ചെയ്യൂ!",
-        "manglish": "Ningalude search-nu matching products illa. Vere keywords try cheyyu or categories browse cheyyu!",
-        "hi": "आपकी खोज से मिलते जुलते प्रोडक्ट नहीं मिले। अलग keywords try करें!",
-        "hinglish": "Aapki search ke matching products nahi mile. Alag keywords try karo ya categories browse karo!",
+        "en": "I couldn't find jewelry matching your search. Try different keywords or browse our categories!",
+        "ta": "உங்க search-க்கு matching jewelry இல்லை. வேற keywords try பண்ணுங்க!",
+        "tanglish": "Unga search ku matching jewelry illa. Vera keywords try pannunga or categories browse pannunga!",
+        "ml": "നിങ്ങളുടെ search-ന് matching jewelry ഇല്ല. മറ്റ് keywords try ചെയ്യൂ!",
+        "manglish": "Ningalude search-nu matching jewelry illa. Vere keywords try cheyyu or categories browse cheyyu!",
+        "hi": "आपकी खोज से मिलते जुलते jewelry नहीं मिले। अलग keywords try करें!",
+        "hinglish": "Aapki search ke matching jewelry nahi mile. Alag keywords try karo ya categories browse karo!",
     },
     "faq_not_found": {
-        "en": "I don't have specific information about that. For detailed help, please email support@chicx.in or call our helpline.",
-        "ta": "இது பற்றி specific information என்கிட்ட இல்லை. support@chicx.in-க்கு email பண்ணுங்க.",
-        "tanglish": "Ithu pathi specific info en kitta illa. support@chicx.in ku email pannunga.",
-        "ml": "ഇതിനെ കുറിച്ച് specific information എന്റെ കയ്യിൽ ഇല്ല. support@chicx.in-ലേക്ക് email ചെയ്യുക.",
-        "manglish": "Ithine kurichu specific info ente kayil illa. support@chicx.in-lekk email cheyyu.",
-        "hi": "इसके बारे में मेरे पास specific जानकारी नहीं है। support@chicx.in पर email करें।",
-        "hinglish": "Iske baare mein mere paas specific info nahi hai. support@chicx.in pe email karo.",
+        "en": "I don't have specific information about that. For detailed help, please use the 'Help Us' section on our website or email support@thechicx.com",
+        "ta": "இது பற்றி specific information என்கிட்ட இல்லை. Website-ல் 'Help Us' section use பண்ணுங்க.",
+        "tanglish": "Ithu pathi specific info en kitta illa. Website la 'Help Us' section use pannunga or support@thechicx.com ku email pannunga.",
+        "ml": "ഇതിനെ കുറിച്ച് specific information എന്റെ കയ്യിൽ ഇല്ല. Website-ൽ 'Help Us' section use ചെയ്യുക.",
+        "manglish": "Ithine kurichu specific info ente kayil illa. Website-il 'Help Us' section use cheyyu or support@thechicx.com-lekk email cheyyu.",
+        "hi": "इसके बारे में मेरे पास specific जानकारी नहीं है। Website पर 'Help Us' section use करें।",
+        "hinglish": "Iske baare mein mere paas specific info nahi hai. Website pe 'Help Us' section use karo ya support@thechicx.com pe email karo.",
     },
     "general_error": {
-        "en": "I'm having trouble processing that right now. Please try again in a moment or contact support@chicx.in for help.",
+        "en": "I'm having trouble processing that right now. Please try again in a moment or contact us via the 'Help Us' section on our website.",
         "ta": "இப்போ சிக்கல் இருக்கு. கொஞ்ச நேரம் கழித்து try பண்ணுங்க.",
-        "tanglish": "Ippo oru sikal iruku. Konjam wait panni try pannunga or support@chicx.in contact pannunga.",
+        "tanglish": "Ippo oru sikal iruku. Konjam wait panni try pannunga or website la 'Help Us' use pannunga.",
         "ml": "ഇപ്പോൾ ഒരു പ്രശ്നമുണ്ട്. കുറച്ച് കഴിഞ്ഞ് try ചെയ്യുക.",
-        "manglish": "Ippo oru problem und. Kurach kazhinjitt try cheyyu or support@chicx.in contact cheyyu.",
+        "manglish": "Ippo oru problem und. Kurach kazhinjitt try cheyyu or website-il 'Help Us' use cheyyu.",
         "hi": "अभी कुछ समस्या है। कुछ देर बाद फिर try करें।",
-        "hinglish": "Abhi kuch problem hai. Thodi der baad try karo ya support@chicx.in contact karo.",
+        "hinglish": "Abhi kuch problem hai. Thodi der baad try karo ya website pe 'Help Us' use karo.",
     },
 }
 
@@ -279,22 +265,22 @@ ORDER_STATUS_DESCRIPTIONS = {
         "hinglish": "Aaj hi aayega! Out for delivery ho gaya.",
     },
     "delivered": {
-        "en": "Your order has been delivered! Hope you love your new fashion finds!",
-        "ta": "உங்க order deliver ஆயிடுச்சு! Enjoy பண்ணுங்க!",
-        "tanglish": "Unga order deliver aagiduchu! Enjoy pannunga!",
-        "ml": "നിങ്ങളുടെ order deliver ആയി! Enjoy ചെയ്യൂ!",
-        "manglish": "Ningalude order deliver aayi! Enjoy cheyyu!",
-        "hi": "आपका ऑर्डर deliver हो गया! Enjoy करें!",
-        "hinglish": "Aapka order deliver ho gaya! Enjoy karo!",
+        "en": "Your order has been delivered! Hope you love your new CHICX jewelry! ✨",
+        "ta": "உங்க order deliver ஆயிடுச்சு! Enjoy பண்ணுங்க! ✨",
+        "tanglish": "Unga order deliver aagiduchu! Enjoy pannunga! ✨",
+        "ml": "നിങ്ങളുടെ order deliver ആയി! Enjoy ചെയ്യൂ! ✨",
+        "manglish": "Ningalude order deliver aayi! Enjoy cheyyu! ✨",
+        "hi": "आपका ऑर्डर deliver हो गया! Enjoy करें! ✨",
+        "hinglish": "Aapka order deliver ho gaya! Enjoy karo! ✨",
     },
     "cancelled": {
-        "en": "This order has been cancelled. If you have questions about the refund, please check your email or contact support.",
-        "ta": "இந்த order cancel ஆயிடுச்சு. Refund பற்றி email check பண்ணுங்க.",
-        "tanglish": "Intha order cancel aagiduchu. Refund pathi email check pannunga.",
-        "ml": "ഈ order cancel ആയി. Refund-നെ കുറിച്ച് email check ചെയ്യുക.",
-        "manglish": "Ee order cancel aayi. Refund-ne kurichu email check cheyyu.",
-        "hi": "यह ऑर्डर cancel हो गया। Refund के बारे में email check करें।",
-        "hinglish": "Ye order cancel ho gaya. Refund ke baare mein email check karo.",
+        "en": "This order has been cancelled. If you have questions, please check your email or contact us.",
+        "ta": "இந்த order cancel ஆயிடுச்சு. Email check பண்ணுங்க.",
+        "tanglish": "Intha order cancel aagiduchu. Email check pannunga.",
+        "ml": "ഈ order cancel ആയി. Email check ചെയ്യുക.",
+        "manglish": "Ee order cancel aayi. Email check cheyyu.",
+        "hi": "यह ऑर्डर cancel हो गया। Email check करें।",
+        "hinglish": "Ye order cancel ho gaya. Email check karo.",
     },
 }
 
@@ -318,7 +304,7 @@ def get_error_response(error_type: str, language: str = "en") -> str:
 
     Args:
         error_type: Type of error (e.g., "product_not_found", "order_not_found")
-        language: Language code - "en", "ta", or "tanglish"
+        language: Language code - "en", "ta", "tanglish", "ml", "manglish", "hi", "hinglish"
 
     Returns:
         The localized error message string.
@@ -335,7 +321,7 @@ def get_order_status_description(status: str, language: str = "en") -> str:
 
     Args:
         status: The order status (e.g., "shipped", "delivered")
-        language: Language code - "en", "ta", or "tanglish"
+        language: Language code - "en", "ta", "tanglish", "ml", "manglish", "hi", "hinglish"
 
     Returns:
         Human-readable status description in the specified language.
@@ -346,3 +332,5 @@ def get_order_status_description(status: str, language: str = "en") -> str:
 
     descriptions = ORDER_STATUS_DESCRIPTIONS[status_lower]
     return descriptions.get(language, descriptions["en"])
+
+# Made with Bob

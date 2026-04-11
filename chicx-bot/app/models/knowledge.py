@@ -55,11 +55,15 @@ class Embedding(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    source_type: Mapped[SourceType] = mapped_column(Enum(SourceType), nullable=False, index=True)
+    source_type: Mapped[SourceType] = mapped_column(
+        Enum(SourceType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        index=True
+    )
     source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
-    # Vector column for pgvector - 768 dimensions (Gemini text-embedding-004 size)
-    embedding = mapped_column(Vector(768) if Vector else Text, nullable=True)
+    # Vector column for pgvector - 2048 dimensions (NVIDIA Llama Nemotron size)
+    embedding = mapped_column(Vector(2048) if Vector else Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

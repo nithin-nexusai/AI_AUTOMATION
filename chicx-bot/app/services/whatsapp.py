@@ -10,6 +10,7 @@ This module handles:
 Reference: https://developers.facebook.com/docs/whatsapp/cloud-api/messages
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -299,12 +300,22 @@ class ChicxToolExecutor:
 
         embedding_service = EmbeddingService(self._db)
 
-        # First search with category filter
+        # First search with category filter (if provided)
         faqs = await embedding_service.search_faqs(
             query=query,
             category=category,
             limit=limit,
         )
+
+        # If no results with category, try without category filter
+        # This handles cases where LLM provides wrong/non-existent category
+        if not faqs and category:
+            logger.info(f"No results with category '{category}', retrying without category filter")
+            faqs = await embedding_service.search_faqs(
+                query=query,
+                category=None,
+                limit=limit,
+            )
 
         # If query mentions specific products, also search without category
         # to catch comprehensive policy documents
@@ -312,7 +323,7 @@ class ChicxToolExecutor:
         query_lower = query.lower()
         mentions_product = any(kw in query_lower for kw in product_keywords)
 
-        if mentions_product and category:
+        if mentions_product and category and faqs:
             # Also search without category filter to find policy docs
             all_faqs = await embedding_service.search_faqs(
                 query=query,
@@ -330,6 +341,11 @@ class ChicxToolExecutor:
         if not faqs:
             # Fallback to text search if semantic search returns nothing
             faqs = await self._text_search_faqs(query, category, limit)
+            
+            # If text search also fails with category, try without category
+            if not faqs and category:
+                logger.info(f"Text search failed with category '{category}', retrying without category")
+                faqs = await self._text_search_faqs(query, None, limit)
 
         if not faqs:
             return {
@@ -515,7 +531,7 @@ class WhatsAppService:
             return True
 
         if not signature or not signature.startswith("sha256="):
-            logger.warning("Invalid signature format")
+            logger.warning(f"Invalid signature format: {signature[:30] if signature else 'None'}...")
             return False
 
         expected_signature = signature[7:]  # Remove "sha256=" prefix
@@ -527,6 +543,12 @@ class WhatsAppService:
         ).hexdigest()
 
         is_valid = hmac.compare_digest(computed_signature, expected_signature)
+        
+        # Debug logging
+        logger.info(f"Signature verification: valid={is_valid}, payload_len={len(payload)}")
+        if not is_valid:
+            logger.warning(f"Expected sig: {expected_signature[:16]}...")
+            logger.warning(f"Computed sig: {computed_signature[:16]}...")
 
         if not is_valid:
             logger.warning("Webhook signature verification failed")
@@ -755,8 +777,13 @@ class WhatsAppService:
             content=response_text,
         )
 
-        # Send response to user
-        await self.send_text_message(sender_phone, response_text)
+        # Send response to user with error handling
+        try:
+            await self.send_text_message(sender_phone, response_text)
+        except Exception as e:
+            logger.error(f"Failed to send message to {sender_phone}: {e}")
+            # Don't raise - message was processed, just delivery failed
+            # The status webhook will notify us of delivery failures
 
         return response_text
 
@@ -786,14 +813,18 @@ class WhatsAppService:
             user_phone=user_phone,
         )
 
-        # Get response with tool calling
+        # Get response with tool calling (with timeout protection)
         try:
-            result = await llm_client.chat_with_tools(
-                messages=messages,
-                tools=get_tool_definitions(),
-                tool_executor=tool_executor,
-                max_iterations=5,
-                temperature=0.7,
+            # Add 30-second timeout for LLM operations
+            result = await asyncio.wait_for(
+                llm_client.chat_with_tools(
+                    messages=messages,
+                    tools=get_tool_definitions(),
+                    tool_executor=tool_executor,
+                    max_iterations=5,
+                    temperature=0.7,
+                ),
+                timeout=30.0
             )
 
             response_text = result["content"] or "I apologize, I couldn't generate a response."
@@ -809,6 +840,12 @@ class WhatsAppService:
 
             return response_text
 
+        except asyncio.TimeoutError:
+            logger.error(f"LLM request timed out after 30 seconds for user {user_phone}")
+            # Update context with user message only
+            await self.add_to_context(user_phone, "user", user_message)
+            return "I apologize, but I'm taking longer than expected to process your request. Please try again in a moment."
+        
         except LLMError as e:
             logger.error(f"LLM error: {e}")
             raise

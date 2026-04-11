@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # PostgreSQL test database
+  postgres-test:
+    image: pgvector/pgvector:pg15
+    container_name: chicx-bot-postgres-test
+    environment:
+      POSTGRES_USER: chicx_test
+      POSTGRES_PASSWORD: chicx_test_pass
+      POSTGRES_DB: chicx_bot_test
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chicx_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - test-network
+
+  # Redis test instance
+  redis-test:
+    image: redis:7-alpine
+    container_name: chicx-bot-redis-test
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - test-network
+
+  # Test runner (optional - for running tests in container)
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: chicx-bot-test-runner
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://chicx_test:chicx_test_pass@postgres-test:5432/chicx_bot_test
+      REDIS_URL: redis://redis-test:6379/0
+      PYTHONPATH: /app
+      APP_ENV: testing
+    volumes:
+      - .:/app
+      - ./htmlcov:/app/htmlcov
+    networks:
+      - test-network
+    command: >
+      sh -c "
+        echo 'Waiting for services...' &&
+        sleep 5 &&
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Running tests...' &&
+        pytest tests/ -v --cov=app --cov-report=html --cov-report=term
+      "
+
+volumes:
+  postgres-test-data:
+
+networks:
+  test-network:
+    driver: bridge
+
+# Made with Bob

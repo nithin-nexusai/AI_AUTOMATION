@@ -1,7 +1,7 @@
 """Embedding service for pgvector semantic search.
 
 This module provides:
-- Embedding generation using Google Gemini API
+- Embedding generation using OpenRouter API (NVIDIA Llama Nemotron - FREE)
 - Semantic search for FAQs using pgvector cosine similarity
 
 Note: Products are fetched from CHICX backend API, not stored locally.
@@ -20,8 +20,8 @@ from app.models.knowledge import Embedding, FAQ, SourceType
 
 logger = logging.getLogger(__name__)
 
-# Embedding model configuration - Gemini text-embedding-004 outputs 768 dimensions
-EMBEDDING_DIMENSION = 768
+# Embedding model configuration - NVIDIA Llama Nemotron outputs 2048 dimensions
+EMBEDDING_DIMENSION = 2048
 
 # Module-level HTTP client for connection reuse
 _http_client: httpx.AsyncClient | None = None
@@ -65,7 +65,7 @@ class EmbeddingService:
         reraise=True,
     )
     async def generate_embedding(self, text_content: str) -> list[float]:
-        """Generate embedding vector for text using Google Gemini.
+        """Generate embedding vector for text using OpenRouter (NVIDIA Llama Nemotron - FREE).
 
         Args:
             text_content: Text to embed
@@ -73,26 +73,32 @@ class EmbeddingService:
         Returns:
             Embedding vector as list of floats (768 dimensions)
         """
-        api_key = self._settings.gemini_api_key
+        api_key = self._settings.openrouter_api_key
         if not api_key:
-            raise ValueError("GEMINI_API_KEY not configured for embeddings")
+            raise ValueError("OPENROUTER_API_KEY not configured for embeddings")
 
-        model = self._settings.embedding_model or "text-embedding-004"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent?key={api_key}"
+        # Use free NVIDIA embedding model from OpenRouter
+        model = "nvidia/llama-nemotron-embed-vl-1b-v2:free"
+        url = "https://openrouter.ai/api/v1/embeddings"
 
         client = _get_http_client()
 
         try:
             response = await client.post(
                 url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
                 json={
-                    "model": f"models/{model}",
-                    "content": {"parts": [{"text": text_content}]},
+                    "model": model,
+                    "input": text_content,
                 },
             )
             response.raise_for_status()
             data = response.json()
-            return data["embedding"]["values"]
+            # OpenRouter returns embeddings in data[0].embedding format
+            return data["data"][0]["embedding"]
         except httpx.HTTPStatusError as e:
             logger.error(f"Embedding API error {e.response.status_code}: {e.response.text}")
             raise
@@ -141,7 +147,7 @@ class EmbeddingService:
                     1 - (e.embedding <=> cast(:embedding as vector)) as relevance_score
                 FROM embeddings e
                 JOIN faqs f ON e.source_id = f.id
-                WHERE e.source_type = 'FAQ'
+                WHERE e.source_type = 'faq'
                     AND f.is_active = true
                     AND LOWER(f.category) = LOWER(:category)
                 ORDER BY e.embedding <=> cast(:embedding as vector)
@@ -161,7 +167,7 @@ class EmbeddingService:
                     1 - (e.embedding <=> cast(:embedding as vector)) as relevance_score
                 FROM embeddings e
                 JOIN faqs f ON e.source_id = f.id
-                WHERE e.source_type = 'FAQ'
+                WHERE e.source_type = 'faq'
                     AND f.is_active = true
                 ORDER BY e.embedding <=> cast(:embedding as vector)
                 LIMIT :limit

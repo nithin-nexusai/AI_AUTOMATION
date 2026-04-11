@@ -22,11 +22,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "search_products",
             "description": (
-                "Search the CHICX product catalog for women's fashion items. "
-                "Use this to find products matching a query, filter by category, "
-                "or filter by price range. Returns a list of matching products with "
-                "basic details. The bot is read-only, so direct users to the website "
-                "to make purchases."
+                "Search the CHICX product catalog to find SPECIFIC products to browse or buy. "
+                "Use this ONLY when the user wants to see actual product listings, prices, "
+                "or browse items (e.g., 'show me red sarees', 'find kurtis under 1000'). "
+                "DO NOT use this for general questions about product features, availability, "
+                "policies, or 'do you have X' questions - use search_faq for those instead. "
+                "Returns a list of matching products with basic details. The bot is read-only, "
+                "so direct users to the website to make purchases."
             ),
             "parameters": {
                 "type": "object",
@@ -179,8 +181,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "search_faq",
             "description": (
                 "Search the FAQ knowledge base for answers to customer questions. "
-                "Use this for questions about shipping, returns, payment methods, "
-                "sizing, care instructions, policies, and general customer support. "
+                "Use this for ALL general questions including: shipping, returns, payment, "
+                "sizing, care instructions, policies, product features, availability questions "
+                "(e.g., 'do you have matching sets?', 'what materials do you use?'), and "
+                "general customer support. This should be your FIRST choice for any question "
+                "that isn't specifically asking to browse/see product listings. "
                 "Uses semantic search powered by pgvector to find the most relevant "
                 "FAQ entries even if the exact keywords don't match."
             ),

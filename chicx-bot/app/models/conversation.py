@@ -54,9 +54,13 @@ class Conversation(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
-    channel: Mapped[ChannelType] = mapped_column(Enum(ChannelType), nullable=False)
+    channel: Mapped[ChannelType] = mapped_column(
+        Enum(ChannelType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False
+    )
     status: Mapped[ConversationStatus] = mapped_column(
-        Enum(ConversationStatus), default=ConversationStatus.ACTIVE
+        Enum(ConversationStatus, values_callable=lambda x: [e.value for e in x]),
+        default=ConversationStatus.ACTIVE
     )
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -85,10 +89,14 @@ class Message(Base):
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=False, index=True
     )
-    role: Mapped[MessageRole] = mapped_column(Enum(MessageRole), nullable=False)
+    role: Mapped[MessageRole] = mapped_column(
+        Enum(MessageRole, values_callable=lambda x: [e.value for e in x]),
+        nullable=False
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[MessageType] = mapped_column(
-        Enum(MessageType), default=MessageType.TEXT
+        Enum(MessageType, values_callable=lambda x: [e.value for e in x]),
+        default=MessageType.TEXT
     )
     wa_message_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
