@@ -1,29 +1,29 @@
 # AiSensy Integration Plan
 
-## Current Status
-- ✅ Support bot working (Meta Cloud API)
-- ✅ Customer conversations functional
-- ✅ FAQ system operational
-- ⚠️ Templates not yet created
+## ⚠️ DEPRECATED - See Simplified Architecture Instead
 
-## Future Implementation (When Templates Are Ready)
+**This document is outdated.** The architecture has been simplified.
 
-### Architecture Overview
+### New Approach:
+- **chicx-bot**: Support conversations only (1 WhatsApp number via Meta Cloud API)
+- **AiSensy Dashboard**: All marketing (separate WhatsApp number)
+
+### See Instead:
+- [`docs/SIMPLIFIED_ARCHITECTURE.md`](SIMPLIFIED_ARCHITECTURE.md) - New simplified approach
+- [`docs/AISENSY_SEGMENTS_INTEGRATION.md`](AISENSY_SEGMENTS_INTEGRATION.md) - How to integrate
+- [`docs/AISENSY_DASHBOARD_GUIDE.md`](AISENSY_DASHBOARD_GUIDE.md) - Dashboard usage
+
+---
+
+## Old Plan (For Reference Only)
+
+### Architecture Overview (DEPRECATED)
 
 **Two WhatsApp Numbers**:
-1. **Support Number** (Meta Cloud API) - For conversations + utility templates
-2. **Marketing Number** (AiSensy) - For marketing templates
+1. **Support Number** (Meta Cloud API) - For conversations
+2. **Marketing Number** (AiSensy Dashboard) - For all marketing
 
-### Template Routing Strategy
-
-| Template Type | Category | Send Via | Number |
-|--------------|----------|----------|--------|
-| Abandoned Cart | Marketing | AiSensy | Marketing |
-| Order Confirmation | Utility | Meta Cloud API | Support |
-| Shipping Update | Utility | Meta Cloud API | Support |
-| OTP/Verification | Utility | Meta Cloud API | Support |
-
-**Note**: General broadcasts (new products, sales) are done manually via AiSensy Dashboard
+**Note**: Marketing is now handled entirely through AiSensy dashboard, not programmatically
 
 ---
 

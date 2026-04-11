@@ -27,20 +27,14 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # WhatsApp (Meta Cloud API) - Primary (Chatbot/Transactional)
-    # Used for: Customer conversations, OTP, order updates
+    # WhatsApp (Meta Cloud API) - Support Bot Only
+    # Used for: Customer conversations, FAQ support, order inquiries
+    # Marketing (abandoned cart, campaigns) handled separately via AiSensy dashboard
     whatsapp_phone_number_id: str = ""
     whatsapp_business_account_id: str = ""
     whatsapp_access_token: str = ""
     whatsapp_verify_token: str = ""
     whatsapp_app_secret: str = ""
-
-    # WhatsApp (Meta Cloud API) - Marketing
-    # Used for: New products, sales, abandoned cart reminders
-    # If not set, falls back to primary number
-    whatsapp_marketing_phone_number_id: str = ""
-    whatsapp_marketing_access_token: str = ""
-    whatsapp_marketing_app_secret: str = ""
 
     # OpenRouter (LLM for chat)
     openrouter_api_key: str = ""
