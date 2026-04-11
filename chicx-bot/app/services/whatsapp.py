@@ -68,11 +68,6 @@ class MessageSendError(WhatsAppServiceError):
     pass
 
 
-class WhatsAppChannel:
-    """WhatsApp channel types for routing messages to correct number."""
-    PRIMARY = "primary"  # Chatbot, OTP, order updates (transactional)
-    MARKETING = "marketing"  # New products, sales, abandoned cart
-
 
 class ChicxToolExecutor:
     """Tool executor for CHICX bot LLM function calling.
@@ -458,41 +453,21 @@ class WhatsAppService:
         self,
         db: AsyncSession,
         redis_client: redis.Redis,
-        channel: str = WhatsAppChannel.PRIMARY,
     ) -> None:
         """Initialize the WhatsApp service.
 
         Args:
             db: Async database session
             redis_client: Redis client for context management
-            channel: WhatsApp channel to use (primary or marketing)
         """
         self._db = db
         self._redis = redis_client
         self._settings = get_settings()
-        self._channel = channel
         self._http_client: httpx.AsyncClient | None = None
-
-    def _get_channel_config(self) -> tuple[str, str]:
-        """Get phone_number_id and access_token for the current channel.
-
-        Returns:
-            Tuple of (phone_number_id, access_token)
-        """
-        if self._channel == WhatsAppChannel.MARKETING:
-            # Use marketing number if configured, otherwise fall back to primary
-            phone_id = self._settings.whatsapp_marketing_phone_number_id
-            token = self._settings.whatsapp_marketing_access_token
-            if phone_id and token:
-                return phone_id, token
-            # Fallback to primary
-            logger.warning("Marketing WhatsApp not configured, falling back to primary")
-
-        return self._settings.whatsapp_phone_number_id, self._settings.whatsapp_access_token
 
     async def _get_http_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client for API calls."""
-        _, access_token = self._get_channel_config()
+        access_token = self._settings.whatsapp_access_token
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(
                 timeout=30.0,
@@ -868,7 +843,7 @@ class WhatsAppService:
 
     async def _send_api_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a request to the WhatsApp API."""
-        phone_number_id, _ = self._get_channel_config()
+        phone_number_id = self._settings.whatsapp_phone_number_id
         url = f"{WHATSAPP_API_BASE_URL}/{phone_number_id}/messages"
 
         client = await self._get_http_client()
@@ -956,7 +931,7 @@ class WhatsAppService:
 
     async def mark_as_read(self, message_id: str) -> dict[str, Any] | None:
         """Mark a message as read."""
-        phone_number_id, _ = self._get_channel_config()
+        phone_number_id = self._settings.whatsapp_phone_number_id
         url = f"{WHATSAPP_API_BASE_URL}/{phone_number_id}/messages"
 
         payload = MarkAsReadPayload(message_id=message_id)
@@ -975,16 +950,14 @@ class WhatsAppService:
 async def get_whatsapp_service(
     db: AsyncSession,
     redis_client: redis.Redis,
-    channel: str = WhatsAppChannel.PRIMARY,
 ) -> WhatsAppService:
     """Create a WhatsApp service instance.
 
     Args:
         db: Async database session
         redis_client: Redis client
-        channel: WhatsApp channel (PRIMARY or MARKETING)
 
     Returns:
-        WhatsAppService instance configured for the specified channel
+        WhatsAppService instance
     """
-    return WhatsAppService(db=db, redis_client=redis_client, channel=channel)
+    return WhatsAppService(db=db, redis_client=redis_client)
