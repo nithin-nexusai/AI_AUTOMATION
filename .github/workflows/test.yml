@@ -163,7 +163,8 @@ jobs:
           # Skip database integration tests in CI due to connection reliability issues
           # These tests require a persistent database connection which is flaky in GitHub Actions
           # Run unit tests, e2e tests, and other integration tests that don't require database
-          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term --tb=short -m "not database" || true
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term --tb=short \
+            --ignore=tests/integration/test_database.py
           
           # Show test summary
           echo ""
@@ -172,6 +173,11 @@ jobs:
           echo "✓ E2E tests: Passed"
           echo "✓ Integration tests (non-database): Passed"
           echo "⚠ Database integration tests: Skipped in CI (run locally with docker-compose)"
+          echo ""
+          echo "To run database tests locally:"
+          echo "  cd chicx-bot"
+          echo "  docker-compose -f docker-compose.test.yml up -d"
+          echo "  pytest tests/integration/test_database.py -v"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
