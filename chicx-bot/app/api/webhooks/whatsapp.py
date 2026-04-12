@@ -144,11 +144,13 @@ async def receive_webhook(
             logger.error("Webhook signature verification failed")
             logger.error(f"App Secret (first 8): {settings.whatsapp_app_secret[:8]}...")
             logger.error(f"Signature header: {x_hub_signature_256}")
-            # For now, log but don't reject to keep bot working
-            logger.warning("⚠️  Continuing despite signature mismatch (temporary)")
-        else:
-            logger.info("✅ Signature verification successful")
+            await service.close()
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid webhook signature",
+            )
         
+        logger.info("✅ Signature verification successful")
         await service.close()
 
     # Parse payload

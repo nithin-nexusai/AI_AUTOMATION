@@ -32,9 +32,9 @@ def test_settings(monkeypatch_session) -> Settings:
         "APP_DEBUG": "true",
         "DATABASE_URL": os.getenv(
             "DATABASE_URL",
-            "postgresql+asyncpg://chicx_test:chicx_test_pass@localhost:5433/chicx_bot_test"
+            "postgresql+asyncpg://test:test@localhost:5432/chicx_test"
         ),
-        "REDIS_URL": os.getenv("REDIS_URL", "redis://localhost:6380/0"),
+        "REDIS_URL": os.getenv("REDIS_URL", "redis://localhost:6379/0"),
         "WHATSAPP_PHONE_NUMBER_ID": "test_phone_id",
         "WHATSAPP_BUSINESS_ACCOUNT_ID": "test_business_id",
         "WHATSAPP_ACCESS_TOKEN": "test_token",
