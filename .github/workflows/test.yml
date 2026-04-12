@@ -60,6 +60,25 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-test.txt
 
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Setup database
+        env:
+          PGPASSWORD: test
+        run: |
+          # Wait for PostgreSQL to be ready
+          until pg_isready -h localhost -p 5432 -U test; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          
+          # Create pgvector extension
+          psql -h localhost -U test -d chicx_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          echo "Database setup complete"
+
       - name: Run linting
         run: |
           cd chicx-bot
