@@ -30,9 +30,10 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U test -d chicx_test"
-          --health-interval 10s
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
+          --health-start-period 10s
       
       redis:
         image: redis:7-alpine
@@ -66,18 +67,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
+      - name: Wait for PostgreSQL
+        run: |
+          # Wait for PostgreSQL to be fully ready
+          for i in {1..30}; do
+            if pg_isready -h 127.0.0.1 -p 5432 -U test -d chicx_test; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "Waiting for PostgreSQL... (attempt $i/30)"
+            sleep 2
+          done
+
       - name: Setup database
         env:
           PGPASSWORD: test
         run: |
-          # Wait for PostgreSQL to be ready
-          until pg_isready -h localhost -p 5432 -U test; do
-            echo "Waiting for PostgreSQL..."
-            sleep 2
-          done
+          # Verify connection
+          psql -h 127.0.0.1 -U test -d chicx_test -c "SELECT version();"
           
           # Create pgvector extension
-          psql -h localhost -U test -d chicx_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          psql -h 127.0.0.1 -U test -d chicx_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          
+          # Verify extension
+          psql -h 127.0.0.1 -U test -d chicx_test -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
+          
           echo "Database setup complete"
 
       - name: Run linting
@@ -88,6 +102,28 @@ jobs:
           black --check app/
           isort --check-only app/
 
+      - name: Verify database connection
+        env:
+          PGPASSWORD: test
+          DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/chicx_test
+        run: |
+          echo "Testing database connection with psql..."
+          psql -h 127.0.0.1 -U test -d chicx_test -c "SELECT 1 as connection_test;" || {
+            echo "Database connection failed!"
+            echo "Checking PostgreSQL service status..."
+            docker ps -a | grep postgres || echo "No postgres container found"
+            exit 1
+          }
+          echo "Database connection successful!"
+          
+          echo ""
+          echo "Testing database connection with Python/SQLAlchemy..."
+          cd chicx-bot
+          python scripts/test_db_connection.py || {
+            echo "Python database connection test failed!"
+            exit 1
+          }
+
       - name: Run tests with coverage
         env:
           # Test database (uses GitHub Actions service)
@@ -95,16 +131,36 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/chicx_test
           REDIS_URL: redis://127.0.0.1:6379/0
           
+          # Application settings
+          APP_ENV: testing
+          APP_DEBUG: true
+          
           # Dummy values for testing - tests use mocked API calls, not real ones
           # Your real secrets go in GitHub Secrets (for deployment) and EC2 .env file (for production)
-          WHATSAPP_PHONE_NUMBER_ID: test
-          WHATSAPP_ACCESS_TOKEN: test
-          WHATSAPP_VERIFY_TOKEN: test
-          WHATSAPP_APP_SECRET: test
-          OPENROUTER_API_KEY: test
+          WHATSAPP_PHONE_NUMBER_ID: test_phone_id
+          WHATSAPP_BUSINESS_ACCOUNT_ID: test_business_id
+          WHATSAPP_ACCESS_TOKEN: test_token
+          WHATSAPP_VERIFY_TOKEN: test_verify
+          WHATSAPP_APP_SECRET: test_secret
+          OPENROUTER_API_KEY: test_openrouter_key
+          OPENROUTER_MODEL: google/gemini-2.0-flash-001
+          GEMINI_API_KEY: test_gemini_key
+          EMBEDDING_MODEL: text-embedding-004
+          BOLNA_BASE_URL: https://api.bolna.dev
+          BOLNA_API_KEY: test_bolna_key
+          BOLNA_WEBHOOK_SECRET: ""
+          BOLNA_CONFIRMATION_AGENT_ID: ""
+          ADMIN_API_KEY: test_admin_key
+          RECORDING_RETENTION_DAYS: 90
+          RECORDING_CLEANUP_ENABLED: true
+          CHICX_API_BASE_URL: ""
+          CHICX_API_KEY: test_chicx_key
+          SHIPROCKET_EMAIL: ""
+          SHIPROCKET_PASSWORD: ""
+          SHIPROCKET_WEBHOOK_SECRET: ""
         run: |
           cd chicx-bot
-          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term --tb=short
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3

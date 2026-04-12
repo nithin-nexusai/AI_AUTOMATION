@@ -32,9 +32,9 @@ def test_settings(monkeypatch_session) -> Settings:
         "APP_DEBUG": "true",
         "DATABASE_URL": os.getenv(
             "DATABASE_URL",
-            "postgresql+asyncpg://test:test@localhost:5432/chicx_test"
+            "postgresql+asyncpg://test:test@127.0.0.1:5432/chicx_test"
         ),
-        "REDIS_URL": os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+        "REDIS_URL": os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
         "WHATSAPP_PHONE_NUMBER_ID": "test_phone_id",
         "WHATSAPP_BUSINESS_ACCOUNT_ID": "test_business_id",
         "WHATSAPP_ACCESS_TOKEN": "test_token",
@@ -101,21 +101,50 @@ def event_loop() -> Generator:
 @pytest_asyncio.fixture(scope="function")
 async def test_db_engine(test_settings):
     """Create test database engine using PostgreSQL."""
+    import time
+    from sqlalchemy.exc import OperationalError
+    
+    # Create engine with connection pool settings optimized for testing
     engine = create_async_engine(
         test_settings.database_url,
         echo=False,
         pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=3600,
+        connect_args={
+            "timeout": 30,
+            "command_timeout": 30,
+        }
     )
     
-    # Create all tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Retry connection with exponential backoff
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            # Test connection and create tables
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            break
+        except (OperationalError, OSError) as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8 seconds
+                print(f"Database connection attempt {attempt + 1} failed: {e}")
+                print(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                print(f"Failed to connect to database after {max_retries} attempts")
+                raise
     
     yield engine
     
     # Clean up: drop all tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+    except Exception as e:
+        print(f"Warning: Failed to clean up database: {e}")
     
     await engine.dispose()
 
