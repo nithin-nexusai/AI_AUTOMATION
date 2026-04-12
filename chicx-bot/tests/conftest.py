@@ -101,7 +101,6 @@ def event_loop() -> Generator:
 @pytest_asyncio.fixture(scope="function")
 async def test_db_engine(test_settings):
     """Create test database engine using PostgreSQL."""
-    import time
     from sqlalchemy.exc import OperationalError
     
     # Create engine with connection pool settings optimized for testing
@@ -132,7 +131,7 @@ async def test_db_engine(test_settings):
                 wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8 seconds
                 print(f"Database connection attempt {attempt + 1} failed: {e}")
                 print(f"Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
+                await asyncio.sleep(wait_time)  # Use async sleep
             else:
                 print(f"Failed to connect to database after {max_retries} attempts")
                 raise
