@@ -91,8 +91,9 @@ jobs:
       - name: Run tests with coverage
         env:
           # Test database (uses GitHub Actions service)
-          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/chicx_test
-          REDIS_URL: redis://localhost:6379/0
+          # Use 127.0.0.1 instead of localhost to avoid IPv6 issues
+          DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/chicx_test
+          REDIS_URL: redis://127.0.0.1:6379/0
           
           # Dummy values for testing - tests use mocked API calls, not real ones
           # Your real secrets go in GitHub Secrets (for deployment) and EC2 .env file (for production)
@@ -103,9 +104,7 @@ jobs:
           OPENROUTER_API_KEY: test
         run: |
           cd chicx-bot
-          # Skip database integration tests in CI (connection issues with GitHub Actions services)
-          # Database tests work fine locally and in Docker
-          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term --ignore=tests/integration/test_database.py
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
