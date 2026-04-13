@@ -3,26 +3,35 @@
 import re
 
 
-def normalize_phone(phone: str | None) -> str:
-    """Normalize phone number for comparison.
+def normalize_phone(phone: str | None, for_db: bool = False) -> str:
+    """Normalize phone number for comparison and storage.
 
-    Removes spaces, dashes, parentheses and ensures consistent format
-    with country code for Indian numbers.
+    CRITICAL: This function now supports two formats:
+    - API/Comparison format: "+919876543210" (with + prefix)
+    - Database format: "919876543210" (without + prefix)
+    
+    Use for_db=True when storing/querying database to match existing records.
+    Use for_db=False (default) for API calls and comparisons.
 
     Args:
         phone: Phone number in any format (e.g., "9876543210", "+91-987-654-3210")
+        for_db: If True, returns format without + prefix for database compatibility
 
     Returns:
-        Normalized phone number with country code (e.g., "+919876543210")
+        Normalized phone number:
+        - for_db=False: "+919876543210" (with + prefix)
+        - for_db=True: "919876543210" (without + prefix)
         Empty string if phone is None or invalid
 
     Examples:
         >>> normalize_phone("9876543210")
         '+919876543210'
+        >>> normalize_phone("9876543210", for_db=True)
+        '919876543210'
         >>> normalize_phone("+91-987-654-3210")
         '+919876543210'
-        >>> normalize_phone("91 9876543210")
-        '+919876543210'
+        >>> normalize_phone("+91-987-654-3210", for_db=True)
+        '919876543210'
         >>> normalize_phone(None)
         ''
     """
@@ -55,4 +64,8 @@ def normalize_phone(phone: str | None) -> str:
         # Invalid format, return as-is for logging
         return phone
 
+    # Return database format (without +) if requested
+    if for_db:
+        return phone.lstrip("+")
+    
     return phone

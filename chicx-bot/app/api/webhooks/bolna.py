@@ -167,6 +167,8 @@ async def handle_tool_call(
 
     Bolna calls this endpoint when the LLM wants to use a tool.
     We execute the tool and return the result.
+    
+    SECURITY: Tools that access user data require phone number validation.
     """
     from app.services.analytics import log_tool_call
 
@@ -181,9 +183,19 @@ async def handle_tool_call(
         elif payload.tool_name == "get_product_details":
             result = await execute_get_product_details(payload.arguments)
         elif payload.tool_name == "get_order_status":
-            result = await execute_get_order_status(payload.arguments, payload.user_phone)
+            # SECURITY: Validate phone number before order lookup
+            if not payload.user_phone:
+                result = {"error": "Phone number required for order status lookup"}
+                success = False
+            else:
+                result = await execute_get_order_status(payload.arguments, payload.user_phone)
         elif payload.tool_name == "get_order_history":
-            result = await execute_get_order_history(payload.arguments, payload.user_phone)
+            # SECURITY: Validate phone number before order history lookup
+            if not payload.user_phone:
+                result = {"error": "Phone number required for order history lookup"}
+                success = False
+            else:
+                result = await execute_get_order_history(payload.arguments, payload.user_phone)
         elif payload.tool_name == "search_faq":
             result = await execute_search_faq(db, payload.arguments)
         elif payload.tool_name == "track_shipment":
@@ -347,20 +359,29 @@ async def handle_call_complete(
     # =========================================================================
     # If this was an outbound confirmation call, extract result and notify CHICX
     
-    confirmation_result = await process_confirmation_call(
-        redis_client=request.app.state.redis,
-        call_id=payload.call_id,
-        transcript=payload.transcript,
-        status=payload.status,
-    )
-    
-    if confirmation_result:
-        logger.info(f"Confirmation call result: order={confirmation_result['order_id']}, confirmed={confirmation_result['confirmed']}")
+    # CRITICAL: Validate Redis client exists before using
+    redis_client = getattr(request.app.state, 'redis', None)
+    if redis_client:
+        try:
+            confirmation_result = await process_confirmation_call(
+                redis_client=redis_client,
+                call_id=payload.call_id,
+                transcript=payload.transcript,
+                status=payload.status,
+            )
+            
+            if confirmation_result:
+                logger.info(f"Confirmation call result: order={confirmation_result['order_id']}, confirmed={confirmation_result['confirmed']}")
+        except Exception as e:
+            logger.error(f"Error processing confirmation call: {e}", exc_info=True)
+            # Don't fail the webhook if confirmation processing fails
+    else:
+        logger.warning("Redis client not available, skipping confirmation call processing")
 
     await db.commit()
 
     logger.info(f"Call {call.id} marked as {call.status.value}, recording_url={'set' if recording_url else 'not set'}")
-    return {"status": "ok", "call_id": str(call.id), "recording_available": bool(recording_url)}
+    return {"status": "ok", "call_id": str(call.id)}
 
 
 # =============================================================================
@@ -440,27 +461,32 @@ async def execute_get_product_details(args: dict[str, Any]) -> dict[str, Any]:
         return {"message": "Sorry, I couldn't get product details right now. Please try again."}
 
 
-async def execute_get_order_status(args: dict[str, Any], user_phone: str | None) -> dict[str, Any]:
+async def execute_get_order_status(args: dict[str, Any], user_phone: str) -> dict[str, Any]:
     """Execute order status lookup via CHICX API.
+    
+    SECURITY: This function requires caller phone number for authorization.
+    Orders can only be accessed by the phone number that placed them.
     
     Args:
         args: Tool arguments containing order_id
-        user_phone: Caller's phone number for authorization
+        user_phone: Caller's phone number for authorization (REQUIRED, not optional)
         
     Returns:
         Order status information if authorized, error message otherwise
+        
+    Raises:
+        ValueError: If user_phone is None or empty (should never happen with proper validation)
     """
+    # CRITICAL: Validate phone number is provided (defense in depth)
+    if not user_phone:
+        logger.error(f"SECURITY: Order status check without phone number: order_id={args.get('order_id')}")
+        raise ValueError("user_phone is required for order status lookup")
     
     client = get_chicx_client()
     order_id = args.get("order_id", "")
 
     if not order_id:
         return {"message": "Please provide your order ID. You can find it in your confirmation email."}
-    
-    # Verify caller identity
-    if not user_phone:
-        logger.warning(f"Order status check without phone number: order_id={order_id}")
-        return {"message": "Unable to verify your identity. Please try calling again."}
 
     try:
         order = await client.get_order(order_id)
@@ -468,10 +494,15 @@ async def execute_get_order_status(args: dict[str, Any], user_phone: str | None)
         if not order:
             return {"message": f"I couldn't find order {order_id}. Please check the order ID and try again."}
         
-        # Security check: Verify order belongs to caller
+        # SECURITY CHECK: Verify order belongs to caller
+        # Use database format (without +) for comparison to match stored phone numbers
         order_phone = order.get("phone", "")
-        normalized_caller = normalize_phone(user_phone)
-        normalized_order = normalize_phone(order_phone)
+        normalized_caller = normalize_phone(user_phone, for_db=True)
+        normalized_order = normalize_phone(order_phone, for_db=True)
+        
+        if not normalized_caller or not normalized_order:
+            logger.error(f"Phone normalization failed: caller={user_phone}, order={order_phone}")
+            return {"message": "Unable to verify order ownership. Please contact support."}
         
         if normalized_caller != normalized_order:
             # Unauthorized access attempt
@@ -506,17 +537,35 @@ async def execute_get_order_status(args: dict[str, Any], user_phone: str | None)
 
 
 
-async def execute_get_order_history(args: dict[str, Any], user_phone: str | None) -> dict[str, Any]:
-    """Execute order history lookup via CHICX API."""
+async def execute_get_order_history(args: dict[str, Any], user_phone: str) -> dict[str, Any]:
+    """Execute order history lookup via CHICX API.
+    
+    Args:
+        args: Tool arguments (limit, status_filter)
+        user_phone: Caller's phone number (REQUIRED, not optional)
+        
+    Returns:
+        Order history information
+        
+    Raises:
+        ValueError: If user_phone is None or empty
+    """
+    # CRITICAL: Validate phone number is provided
     if not user_phone:
-        return {"message": "I need your phone number to look up your orders."}
+        logger.error("SECURITY: Order history check without phone number")
+        raise ValueError("user_phone is required for order history lookup")
+
+    # Normalize phone for API call
+    normalized_phone = normalize_phone(user_phone, for_db=True)
+    if not normalized_phone:
+        return {"message": "Invalid phone number format. Please try calling again."}
 
     client = get_chicx_client()
 
     try:
         result = await client.get_order_by_phone(
-            phone=user_phone,
-            limit=3,
+            phone=normalized_phone,
+            limit=args.get("limit", 3),
         )
 
         orders = result.get("orders", [])
@@ -645,10 +694,24 @@ async def find_call(
 async def get_or_create_user(db: AsyncSession, phone: str) -> User:
     """Get existing user or create new one.
     
-    Phone is stored without '+' prefix to match existing DB format.
+    IMPORTANT: Phone numbers are stored in database WITHOUT '+' prefix
+    to match existing records. Use normalize_phone(phone, for_db=True).
+    
+    Args:
+        phone: Phone number in any format
+        
+    Returns:
+        User object (existing or newly created)
+        
+    Raises:
+        ValueError: If phone normalization fails
     """
-    # Strip + for DB compatibility (existing records stored without +)
-    db_phone = phone.lstrip("+") if phone else phone
+    # Normalize to database format (without + prefix)
+    db_phone = normalize_phone(phone, for_db=True)
+    
+    if not db_phone:
+        logger.error(f"Failed to normalize phone number: {phone}")
+        raise ValueError(f"Invalid phone number format: {phone}")
     
     result = await db.execute(
         select(User).where(User.phone == db_phone)

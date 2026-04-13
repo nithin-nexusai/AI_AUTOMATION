@@ -27,7 +27,6 @@ from app.core.tools import (
 )
 from app.core.prompts import (
     WHATSAPP_SYSTEM_PROMPT,
-    VOICE_SYSTEM_PROMPT,
     ERROR_RESPONSES,
     ORDER_STATUS_DESCRIPTIONS,
     get_system_prompt,
@@ -55,7 +54,6 @@ __all__ = [
     "TOOL_RESPONSE_SCHEMAS",
     # Prompts
     "WHATSAPP_SYSTEM_PROMPT",
-    "VOICE_SYSTEM_PROMPT",
     "ERROR_RESPONSES",
     "ORDER_STATUS_DESCRIPTIONS",
     "get_system_prompt",

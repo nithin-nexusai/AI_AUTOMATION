@@ -6,7 +6,6 @@ from app.core.prompts import (
     get_error_response,
     get_order_status_description,
     WHATSAPP_SYSTEM_PROMPT,
-    VOICE_SYSTEM_PROMPT,
 )
 
 
@@ -22,11 +21,10 @@ class TestSystemPrompts:
         assert "multilingual" in prompt.lower()
 
     def test_get_system_prompt_voice(self):
-        """Test getting voice system prompt."""
+        """Test that voice channel returns WhatsApp prompt (voice prompts in Bolna)."""
         prompt = get_system_prompt("voice")
-        assert prompt == VOICE_SYSTEM_PROMPT
+        assert prompt == WHATSAPP_SYSTEM_PROMPT
         assert "CHICX Assistant" in prompt
-        assert "conversational" in prompt.lower()
 
     def test_get_system_prompt_default(self):
         """Test default system prompt."""
