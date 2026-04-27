@@ -127,19 +127,22 @@ class ChicxAPIClient:
             response.raise_for_status()
             data = response.json()
 
-            if not data.get("status"):
+            # API returns {"status": "success", "data": [...], "pagination": {...}}
+            if data.get("status") != "success":
                 logger.warning(f"Product search returned no results: {query}")
                 return {"products": [], "total_count": 0}
 
             # Map API response to our expected format
             products = data.get("data", [])
+            pagination = data.get("pagination", {})
+            
             logger.info(f"CHICX product search: query={query}, results={len(products)}")
             
             return {
                 "products": products,
-                "total_count": data.get("total_records", len(products)),
-                "page": data.get("page", page),
-                "total_pages": data.get("total_pages", 1),
+                "total_count": pagination.get("total", len(products)),
+                "page": pagination.get("page", page),
+                "total_pages": pagination.get("pages", 1),
             }
 
         except httpx.HTTPStatusError as e:
@@ -179,7 +182,8 @@ class ChicxAPIClient:
             response.raise_for_status()
             data = response.json()
             
-            if not data.get("status"):
+            # API returns {"status": "success", "data": [...]}
+            if data.get("status") != "success":
                 return None
             
             products = data.get("data", [])
@@ -241,12 +245,12 @@ class ChicxAPIClient:
             response.raise_for_status()
             data = response.json()
             
-            # API returns {status: true/false, order: {...}}
-            if not data.get("status"):
+            # API returns {"status": "success", "data": {...}}
+            if data.get("status") != "success":
                 logger.warning(f"Order not found: {order_id}")
                 return None
                 
-            return data.get("order")
+            return data.get("data")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -296,10 +300,11 @@ class ChicxAPIClient:
             response.raise_for_status()
             data = response.json()
             
-            if not data.get("status"):
+            # API returns {"status": "success", "data": {...}}
+            if data.get("status") != "success":
                 return None
                 
-            return data
+            return data.get("data")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
@@ -349,14 +354,16 @@ class ChicxAPIClient:
             response.raise_for_status()
             data = response.json()
             
-            if not data.get("status"):
+            # API returns {"status": "success", "data": [...]}
+            if data.get("status") != "success":
                 return {"orders": [], "total_orders": 0}
             
             # Apply limit locally if needed
-            orders = data.get("orders", [])[:limit]
+            orders = data.get("data", [])[:limit]
+            pagination = data.get("pagination", {})
             return {
                 "orders": orders,
-                "total_orders": data.get("total_orders", len(orders)),
+                "total_orders": pagination.get("total", len(orders)),
             }
 
         except httpx.HTTPStatusError as e:
@@ -417,23 +424,25 @@ class ChicxAPIClient:
             response.raise_for_status()
             data = response.json()
             
-            if not data.get("status"):
+            # API returns {"status": "success", "data": [...] or "data": {...}}
+            if data.get("status") != "success":
                 return {"orders": [], "total_orders": 0}
             
             # API may return single order or list - normalize to list
-            order_data = data.get("order")
+            order_data = data.get("data")
             if order_data:
-                # Single order returned
+                # Single order returned as dict, or list of orders
                 orders = [order_data] if isinstance(order_data, dict) else order_data
             else:
-                orders = data.get("orders", [])
+                orders = []
             
             # Apply limit
             orders = orders[:limit]
             
+            pagination = data.get("pagination", {})
             return {
                 "orders": orders,
-                "total_orders": len(orders),
+                "total_orders": pagination.get("total", len(orders)),
             }
 
         except httpx.HTTPStatusError as e:
@@ -491,6 +500,7 @@ class ChicxAPIClient:
             response.raise_for_status()
             data = response.json()
             
+            # API returns {"status": "success", "message": "..."}
             logger.info(f"Order confirmation sent successfully: {order_id}")
             return data
             

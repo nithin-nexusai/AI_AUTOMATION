@@ -15,11 +15,11 @@ Your backend calls these to send WhatsApp messages and trigger voice calls.
 | # | Endpoint | Method | Purpose |
 |---|----------|--------|---------|
 | 1 | `/webhooks/chicx/send-otp` | POST | Send login OTP via WhatsApp |
-| 2 | `/webhooks/chicx/cart-reminder` | POST | Cart abandonment reminder via WhatsApp |
-| 3 | `/webhooks/chicx/order-update` | POST | Order status change notification via WhatsApp |
-| 4 | `/webhooks/chicx/new-product` | POST | New product broadcast via WhatsApp (up to 1000 phones) |
-| 5 | `/webhooks/chicx/sale-announcement` | POST | Sale/promotion broadcast via WhatsApp (up to 1000 phones) |
-| 6 | `/webhooks/chicx/confirm-order` | POST | Trigger outbound voice call to confirm COD order |
+| 2 | `/webhooks/chicx/order-update` | POST | Order status change notification via WhatsApp |
+| 3 | `/webhooks/chicx/confirm-order` | POST | Trigger outbound voice call to confirm COD order |
+
+> [!NOTE]
+> **Marketing notifications** (cart reminders, new arrivals, sales) are handled via **AiSensy** platform. See [`BACKEND_AISENSY_INTEGRATION.md`](./BACKEND_AISENSY_INTEGRATION.md).
 
 ### Quick Payloads
 
@@ -28,18 +28,7 @@ Your backend calls these to send WhatsApp messages and trigger voice calls.
 { "phone": "9876543210", "otp": "123456" }
 ```
 
-#### 2. Cart Reminder
-```json
-{
-  "phone": "9876543210",
-  "customer_name": "Priya",
-  "product_name": "Blue Silk Saree",
-  "cart_total": 2499.00,
-  "checkout_url": "https://chicx.in/checkout/abc"
-}
-```
-
-#### 3. Order Update
+#### 2. Order Update
 ```json
 {
   "phone": "9876543210",
@@ -52,29 +41,7 @@ Your backend calls these to send WhatsApp messages and trigger voice calls.
 
 **Recommended status values:** `Order Placed`, `Order Confirmed`, `Shipped`, `Out for Delivery`, `Delivered`, `Cancelled`
 
-#### 4. New Product Broadcast
-```json
-{
-  "phones": ["9876543210", "9123456789"],
-  "title": "New Arrival!",
-  "body": "Designer Lehenga - ₹4999",
-  "image_url": "https://chicx.in/images/lehenga.jpg",
-  "product_url": "https://chicx.in/products/lehenga"
-}
-```
-
-#### 5. Sale Announcement Broadcast
-```json
-{
-  "phones": ["9876543210", "9123456789"],
-  "title": "Diwali Sale 🎉",
-  "body": "Up to 50% OFF on all products!",
-  "image_url": "https://chicx.in/images/sale-poster.jpg",
-  "sale_url": "https://chicx.in/sale"
-}
-```
-
-#### 6. Confirm Order (Voice Call)
+#### 3. Confirm Order (Voice Call)
 ```json
 {
   "phone": "9876543210",
@@ -91,12 +58,55 @@ Your backend calls these to send WhatsApp messages and trigger voice calls.
 
 ---
 
-## 2. Callback API (Bot → CHICX Backend)
+## 2. Data APIs (CHICX Backend → Bot)
+
+The bot calls these endpoints to fetch product and order data.
+
+**Base URL:** `https://{CHICX_API_BASE_URL}`
+**Auth header:** `Authorization: Bearer {CHICX_API_KEY}`
+
+| # | Endpoint | Method | Purpose |
+|---|----------|--------|---------|
+| 1 | `/api/get_products.php` | GET | Search products with filters |
+| 2 | `/api/get_order.php?order_id={id}` | GET | Get order details by ID |
+| 3 | `/api/get_order.php?phone={phone}` | GET | Get orders by phone number |
+| 4 | `/api/order_status.php?order_id={id}` | GET | Get order status (lightweight) |
+| 5 | `/api/my_orders.php?user_id={id}` | GET | Get orders by user ID |
+
+### Key Response Format Requirements
+
+#### Products API Response
+```json
+{
+  "status": true,
+  "page": 1,
+  "total_records": 45,
+  "total_pages": 5,
+  "data": [...]  // ⚠️ Must be "data" not "products"
+}
+```
+
+#### Order API Response
+```json
+{
+  "status": true,
+  "order": {
+    "order_id": "ORD123",
+    "phone": "9876543210",  // ⚠️ 10 digits, no +
+    "order_status": "Shipped",
+    "status": "Shipped"  // ⚠️ Include both fields
+  }
+}
+```
+
+---
+
+## 3. Callback API (Bot → CHICX Backend)
 
 The bot calls this endpoint **after** a confirmation voice call completes.
 
-> [!IMPORTANT]
-> Your backend **must implement** this endpoint to receive confirmation results.
+> [!CRITICAL]
+> Your backend **MUST implement** this endpoint to receive confirmation results.
 
 ```
 POST {CHICX_API_BASE_URL}/api/confirm_order.php
