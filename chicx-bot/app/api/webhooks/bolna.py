@@ -157,6 +157,65 @@ async def handle_transcript(
     return {"status": "ok", "call_id": str(call.id)}
 
 
+@router.post("/conversation")
+async def handle_conversation_webhook(
+    payload: dict[str, Any],
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _auth: BolnaAuth = None,
+) -> dict[str, Any]:
+    """Handle conversation webhook from Bolna.
+    
+    This is the main endpoint for custom LLM orchestration.
+    Bolna sends user transcripts here, and we return text for Bolna to speak.
+    
+    Flow:
+        1. Receive user transcript from Bolna
+        2. Process with VoiceOrchestrator (LLM + tools)
+        3. Return response text for Bolna TTS
+    """
+    from app.schemas.voice import ConversationWebhookPayload
+    from app.services.voice_orchestrator import VoiceOrchestrator
+    
+    logger.info(f"Bolna conversation webhook: call_id={payload.get('call_id')}")
+    
+    try:
+        # Parse payload
+        webhook_payload = ConversationWebhookPayload(**payload)
+        
+        # Get Redis client from app state
+        redis_client = getattr(request.app.state, 'redis', None)
+        if not redis_client:
+            logger.error("Redis client not available")
+            return {
+                "status": "error",
+                "response": "I'm having technical difficulties. Please try again later.",
+            }
+        
+        # Process with voice orchestrator
+        orchestrator = VoiceOrchestrator(db, redis_client)
+        
+        response_text = await orchestrator.process_transcript(
+            call_id=webhook_payload.call_id,
+            transcript=webhook_payload.transcript,
+            user_phone=webhook_payload.user_phone or "",
+        )
+        
+        logger.info(f"Generated response for call {webhook_payload.call_id}: {response_text[:100]}...")
+        
+        return {
+            "status": "ok",
+            "response": response_text,
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error processing conversation webhook: {e}")
+        return {
+            "status": "error",
+            "response": "I apologize, I'm having trouble processing your request. Please try again.",
+        }
+
+
 @router.post("/tool")
 async def handle_tool_call(
     payload: ToolCallPayload,
